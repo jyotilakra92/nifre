@@ -28,13 +28,17 @@ class GptModel(nn.Module):
         self.final_norm = LayerNorm(cfg["emb_dim"])
         self.out_head = nn.Linear(cfg["emb_dim"], cfg["vocab_size"], bias=False)
 
-    def forward(self, in_idx, kv_cache=None, input_lens=None):
+    def forward(self, in_idx, kv_cache=None, input_lens=None, cache_batch_indices=None):
         batch_size, seq_len = in_idx.shape
 
         if kv_cache is None:
             positions = torch.arange(seq_len, device=in_idx.device)
         elif seq_len == 1:
-            positions = kv_cache.pos.unsqueeze(1)
+            if cache_batch_indices is not None:
+                indices = torch.tensor(cache_batch_indices, device=in_idx.device, dtype=torch.long)
+                positions = kv_cache.pos[indices].unsqueeze(1)
+            else:
+                positions = kv_cache.pos[:batch_size].unsqueeze(1)
         else:
             positions = torch.zeros(batch_size, seq_len, dtype=torch.long, device=in_idx.device)
             if input_lens is None:
@@ -54,6 +58,7 @@ class GptModel(nn.Module):
                 kv_cache=kv_cache,
                 layer_id=layer_id,
                 input_lens=input_lens,
+                cache_batch_indices=cache_batch_indices,
             )
 
         x = self.final_norm(x)

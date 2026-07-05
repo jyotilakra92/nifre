@@ -20,7 +20,7 @@ class MultiHeadAttention(nn.Module):
             torch.triu(torch.ones(context_length, context_length), diagonal=1),
         )
 
-    def forward(self, x, kv_cache=None, layer_id=None, input_lens=None):
+    def forward(self, x, kv_cache=None, layer_id=None, input_lens=None, cache_batch_indices=None):
         """Run multi-head attention, optionally reading/writing a KV cache.
 
         Training (no cache): pass only ``x``. Full causal attention over all tokens.
@@ -33,7 +33,7 @@ class MultiHeadAttention(nn.Module):
             return self._forward_training(x)
         if layer_id is None:
             raise ValueError("layer_id is required when kv_cache is set")
-        return self._forward_with_cache(x, kv_cache, layer_id, input_lens)
+        return self._forward_with_cache(x, kv_cache, layer_id, input_lens, cache_batch_indices)
 
     def _forward_training(self, x):
         b, num_tokens, _ = x.shape
@@ -60,22 +60,23 @@ class MultiHeadAttention(nn.Module):
         context_vec = context_vec.contiguous().view(b, num_tokens, self.d_out)
         return self.out_proj(context_vec)
 
-    def _forward_with_cache(self, x, kv_cache, layer_id, input_lens=None):
+    def _forward_with_cache(self, x, kv_cache, layer_id, input_lens=None, cache_batch_indices=None):
         batch_size, num_new_tokens, _ = x.shape
         out = torch.zeros_like(x)
 
-        for batch_idx in range(batch_size):
+        for i in range(batch_size):
+            cache_slot = cache_batch_indices[i] if cache_batch_indices is not None else i
             if input_lens is not None and num_new_tokens > 1:
-                valid_len = input_lens[batch_idx].item()
-                x_row = x[batch_idx : batch_idx + 1, -valid_len:]
+                valid_len = input_lens[i].item()
+                x_row = x[i : i + 1, -valid_len:]
                 out_row = self._forward_with_cache_row(
-                    x_row, kv_cache, batch_idx, layer_id
+                    x_row, kv_cache, cache_slot, layer_id
                 )
-                out[batch_idx, -valid_len:] = out_row.squeeze(0)
+                out[i, -valid_len:] = out_row.squeeze(0)
             else:
-                x_row = x[batch_idx : batch_idx + 1]
-                out[batch_idx : batch_idx + 1] = self._forward_with_cache_row(
-                    x_row, kv_cache, batch_idx, layer_id
+                x_row = x[i : i + 1]
+                out[i : i + 1] = self._forward_with_cache_row(
+                    x_row, kv_cache, cache_slot, layer_id
                 )
 
         return out

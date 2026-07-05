@@ -68,6 +68,10 @@ class KVCache:
     def lengths(self):
         return self.pos.clone()
 
+    def reset_slot(self, batch_idx):
+        """Clear the write cursor when reusing a cache row for a new request."""
+        self.pos[batch_idx] = 0
+
     def free(self):
         self.batch_size = 0
         self.pos = None

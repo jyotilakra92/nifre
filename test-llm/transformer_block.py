@@ -21,7 +21,7 @@ class TransformerBlock(nn.Module):
         self.norm2 = LayerNorm(cfg["emb_dim"])
         self.drop_shortcut = nn.Dropout(cfg["drop_rate"])
 
-    def forward(self, x, kv_cache=None, layer_id=None, input_lens=None):
+    def forward(self, x, kv_cache=None, layer_id=None, input_lens=None, cache_batch_indices=None):
         shortcut = x
         x = self.norm1(x)
         x = self.att(
@@ -29,6 +29,7 @@ class TransformerBlock(nn.Module):
             kv_cache=kv_cache,
             layer_id=layer_id,
             input_lens=input_lens,
+            cache_batch_indices=cache_batch_indices,
         )
         x = self.drop_shortcut(x)
         x = x + shortcut
