@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Inference Engine — Observability</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --panel: #1a2332;
+      --border: #2d3a4f;
+      --text: #e6edf3;
+      --muted: #8b949e;
+      --accent: #58a6ff;
+      --green: #3fb950;
+      --amber: #d29922;
+      --red: #f85149;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+      padding: 1.5rem;
+    }
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1.5rem;
+      padding-bottom: 1rem;
+      border-bottom: 1px solid var(--border);
+    }
+    header h1 { font-size: 1.4rem; font-weight: 600; }
+    header .status { color: var(--muted); font-size: 0.85rem; }
+    .grid { display: grid; gap: 1rem; margin-bottom: 1.5rem; }
+    .grid-4 { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
+    .grid-2 { grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+    section {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1.25rem;
+      margin-bottom: 1.5rem;
+    }
+    section h2 {
+      font-size: 1rem;
+      font-weight: 600;
+      margin-bottom: 1rem;
+      color: var(--accent);
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+    }
+    .card {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.85rem 1rem;
+    }
+    .card .label { font-size: 0.75rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+    .card .value { font-size: 1.5rem; font-weight: 600; margin-top: 0.25rem; }
+    .card .value.small { font-size: 1.1rem; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    th, td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border); }
+    th { color: var(--muted); font-weight: 500; font-size: 0.75rem; text-transform: uppercase; }
+    .chart-wrap { position: relative; height: 220px; margin-top: 0.5rem; }
+    .events { max-height: 200px; overflow-y: auto; font-size: 0.85rem; }
+    .event { padding: 0.4rem 0; border-bottom: 1px solid var(--border); display: flex; gap: 0.75rem; }
+    .event .action { font-weight: 600; min-width: 90px; }
+    .event .action.attempted { color: var(--amber); }
+    .event .action.promoted { color: var(--green); }
+    .event .action.rolled_back { color: var(--red); }
+    .badge {
+      display: inline-block;
+      padding: 0.15rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      background: var(--border);
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Inference Engine Observability</h1>
+    <div class="status">Last updated: <span id="last-updated">—</span></div>
+  </header>
+
+  <section id="request-health">
+    <h2>1. Request Health</h2>
+    <div class="grid grid-4" id="health-cards"></div>
+    <div class="grid grid-2">
+      <div class="chart-wrap"><canvas id="chart-requests"></canvas></div>
+      <div class="chart-wrap"><canvas id="chart-queue"></canvas></div>
+    </div>
+  </section>
+
+  <section id="latency">
+    <h2>2. Latency</h2>
+    <table id="latency-table">
+      <thead>
+        <tr><th>Metric</th><th>P50</th><th>P95</th><th>P99</th><th>Mean</th></tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <section id="throughput">
+    <h2>3. Throughput</h2>
+    <div class="grid grid-4" id="throughput-cards"></div>
+    <div class="grid grid-2">
+      <div class="chart-wrap"><canvas id="chart-tokens"></canvas></div>
+      <div class="chart-wrap"><canvas id="chart-batch"></canvas></div>
+    </div>
+  </section>
+
+  <section id="gpu-runtime">
+    <h2>4. GPU / Runtime</h2>
+    <div class="grid grid-4" id="runtime-cards"></div>
+    <div class="grid grid-2">
+      <div class="chart-wrap"><canvas id="chart-gpu"></canvas></div>
+      <div class="chart-wrap"><canvas id="chart-kv"></canvas></div>
+    </div>
+  </section>
+
+  <section id="optimization">
+    <h2>5. Optimization History</h2>
+    <div class="grid grid-4" id="optimization-cards"></div>
+    <h3 style="font-size:0.85rem;color:var(--muted);margin:1rem 0 0.5rem;">Recent events</h3>
+    <div class="events" id="optimization-events"></div>
+  </section>
+
+  <script>
+    const charts = {};
+
+    function makeChart(id, label, color) {
+      const ctx = document.getElementById(id).getContext("2d");
+      charts[id] = new Chart(ctx, {
+        type: "line",
+        data: {
+          labels: [],
+          datasets: [{
+            label,
+            data: [],
+            borderColor: color,
+            backgroundColor: color + "33",
+            fill: true,
+            tension: 0.3,
+            pointRadius: 0,
+          }],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { labels: { color: "#8b949e" } } },
+          scales: {
+            x: { ticks: { color: "#8b949e", maxTicksLimit: 6 }, grid: { color: "#2d3a4f" } },
+            y: { ticks: { color: "#8b949e" }, grid: { color: "#2d3a4f" }, beginAtZero: true },
+          },
+        },
+      });
+    }
+
+    function card(label, value, small) {
+      return `<div class="card"><div class="label">${label}</div><div class="value${small ? " small" : ""}">${value}</div></div>`;
+    }
+
+    function updateChart(id, series) {
+      if (!charts[id] || !series) return;
+      const labels = series.map((p) => new Date(p[0] * 1000).toLocaleTimeString());
+      charts[id].data.labels = labels;
+      charts[id].data.datasets[0].data = series.map((p) => p[1]);
+      charts[id].update("none");
+    }
+
+    function updateMultiChart(id, seriesList, labels_) {
+      if (!charts[id]) return;
+      const ts = seriesList[0] || [];
+      charts[id].data.labels = ts.map((p) => new Date(p[0] * 1000).toLocaleTimeString());
+      seriesList.forEach((series, i) => {
+        if (charts[id].data.datasets[i]) {
+          charts[id].data.datasets[i].data = (series || []).map((p) => p[1]);
+        }
+      });
+      charts[id].update("none");
+    }
+
+    function renderLatencyTable(latency) {
+      const rows = [
+        ["TTFT", latency.ttft],
+        ["Total request", latency.total_request_latency],
+        ["Prefill step", latency.prefill_step_latency],
+        ["Decode step", latency.decode_step_latency],
+        ["Inter-token", latency.inter_token_latency],
+      ];
+      const tbody = document.querySelector("#latency-table tbody");
+      tbody.innerHTML = rows.map(([name, s]) =>
+        `<tr><td>${name}</td><td>${s.p50_ms} ms</td><td>${s.p95_ms} ms</td><td>${s.p99_ms} ms</td><td>${s.mean_ms} ms</td></tr>`
+      ).join("");
+    }
+
+    async function refresh() {
+      try {
+        const res = await fetch("/api/metrics");
+        const data = await res.json();
+        const h = data.request_health;
+        const t = data.throughput;
+        const g = data.gpu_runtime;
+        const o = data.optimization_history;
+        const ts = data.timeseries;
+
+        document.getElementById("last-updated").textContent = new Date(data.timestamp * 1000).toLocaleString();
+
+        document.getElementById("health-cards").innerHTML = [
+          card("Requests / sec", h.requests_per_sec.toFixed(2)),
+          card("Active", h.active_requests),
+          card("Queued", h.queued_requests),
+          card("Completed", h.completed_requests),
+          card("Error rate", (h.error_rate * 100).toFixed(2) + "%", true),
+          card("Timeout rate", (h.timeout_rate * 100).toFixed(2) + "%", true),
+        ].join("");
+
+        document.getElementById("throughput-cards").innerHTML = [
+          card("Tokens / sec", t.tokens_per_sec),
+          card("Input tok / sec", t.input_tokens_per_sec),
+          card("Output tok / sec", t.output_tokens_per_sec),
+          card("Tokens / request", t.tokens_per_request),
+          card("Decode iters / sec", t.decode_iterations_per_sec),
+        ].join("");
+
+        document.getElementById("runtime-cards").innerHTML = [
+          card("GPU util", g.gpu_utilization_pct + "%"),
+          card("GPU memory", g.gpu_memory_used_gb + " GB"),
+          card("KV cache", g.kv_cache_used_gb + " / " + g.kv_cache_memory_gb + " GB", true),
+          card("KV util", g.kv_cache_utilization_pct + "%"),
+          card("Runtime", `<span class="badge">${g.runtime}</span>`, true),
+          card("Model", g.model_name, true),
+          card("Precision", g.precision, true),
+          card("Device", g.device, true),
+        ].join("");
+
+        const improvement = o.cost_improvement_pct != null ? o.cost_improvement_pct + "%" : "—";
+        document.getElementById("optimization-cards").innerHTML = [
+          card("Baseline latency", o.baseline_latency_ms != null ? o.baseline_latency_ms.toFixed(1) + " ms" : "—", true),
+          card("Current latency", o.current_latency_ms != null ? o.current_latency_ms.toFixed(1) + " ms" : "—", true),
+          card("Baseline throughput", o.baseline_throughput_tps != null ? o.baseline_throughput_tps.toFixed(1) + " tok/s" : "—", true),
+          card("Current throughput", o.current_throughput_tps != null ? o.current_throughput_tps.toFixed(1) + " tok/s" : "—", true),
+          card("Cost improvement", improvement),
+          card("Attempted", o.optimizations_attempted),
+          card("Promoted", o.optimizations_promoted),
+          card("Rolled back", o.optimizations_rolled_back),
+        ].join("");
+
+        document.getElementById("optimization-events").innerHTML = (o.recent_events || [])
+          .slice().reverse()
+          .map((e) =>
+            `<div class="event"><span class="action ${e.action}">${e.action}</span><span>${e.name}</span><span style="color:var(--muted)">${e.details || ""}</span></div>`
+          ).join("") || "<div style='color:var(--muted)'>No optimization events yet.</div>";
+
+        renderLatencyTable(data.latency);
+        updateChart("chart-requests", ts.requests_per_sec);
+        updateMultiChart("chart-queue", [ts.active_requests, ts.queued_requests]);
+        updateMultiChart("chart-tokens", [ts.tokens_per_sec, ts.input_tokens_per_sec, ts.output_tokens_per_sec]);
+        updateChart("chart-batch", ts.batch_size);
+        updateMultiChart("chart-gpu", [ts.gpu_utilization, ts.gpu_memory_gb]);
+        updateChart("chart-kv", ts.kv_cache_utilization);
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    makeChart("chart-requests", "Requests / sec", "#58a6ff");
+    makeChart("chart-queue", "Active / Queued", "#58a6ff");
+    charts["chart-queue"].data.datasets.push({
+      label: "Queued",
+      data: [],
+      borderColor: "#d29922",
+      backgroundColor: "#d2992233",
+      fill: true,
+      tension: 0.3,
+      pointRadius: 0,
+    });
+    charts["chart-queue"].data.datasets[0].label = "Active";
+
+    makeChart("chart-tokens", "Tokens / sec", "#3fb950");
+    charts["chart-tokens"].data.datasets.push(
+      { label: "Input tok/s", data: [], borderColor: "#58a6ff", fill: false, tension: 0.3, pointRadius: 0 },
+      { label: "Output tok/s", data: [], borderColor: "#a371f7", fill: false, tension: 0.3, pointRadius: 0 }
+    );
+    makeChart("chart-batch", "Batch size", "#d29922");
+    makeChart("chart-gpu", "GPU util %", "#58a6ff");
+    charts["chart-gpu"].data.datasets.push({
+      label: "GPU mem GB",
+      data: [],
+      borderColor: "#3fb950",
+      fill: false,
+      tension: 0.3,
+      pointRadius: 0,
+      yAxisID: "y",
+    });
+    makeChart("chart-kv", "KV cache util %", "#a371f7");
+
+    refresh();
+    setInterval(refresh, 2000);
+  </script>
+</body>
+</html>

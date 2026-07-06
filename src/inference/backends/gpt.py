@@ -4,7 +4,7 @@ from typing import Optional, Tuple
 import tiktoken
 import torch
 
-from data_model.model_config import ModelConfig
+from inference.data_model import ModelConfig
 from inference.model_interface import InferenceModel, Tokenizer
 from model.gpt_model import GPT_CONFIG_124M, GptModel
 

@@ -22,6 +22,11 @@ class InferenceRequest:
     output_token_ids: list = field(default_factory=list)
     batch_idx: Optional[int] = None
     created_at: float = field(default_factory=time.time)
+    first_token_at: Optional[float] = None
+    finished_at: Optional[float] = None
+    last_token_at: Optional[float] = None
+    prefill_duration_sec: Optional[float] = None
+    status: str = "ok"
 
     @property
     def num_prompt_tokens(self) -> int:
@@ -36,6 +41,7 @@ class InferenceRequest:
 class ScheduleResult:
     prefill_requests: list
     decode_requests: list
+
 
 @dataclass(frozen=True)
 class ModelConfig:

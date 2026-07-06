@@ -2,7 +2,7 @@ from typing import List, Protocol
 
 import torch
 
-from data_model.model_config import ModelConfig
+from inference.data_model import ModelConfig
 from model.kv_cache import KVCache
 
 

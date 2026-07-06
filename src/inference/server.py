@@ -12,6 +12,8 @@ from pydantic import BaseModel, Field
 from inference.backends.registry import list_backends, load_backend
 from inference.engine import Engine
 from model.generate import get_device
+from observability import Observability
+from observability.dashboard.server import register_observability_routes
 
 DEFAULT_CHECKPOINT = (
     Path(__file__).resolve().parent.parent / "model" / "checkpoints" / "gpt_model_checkpoint.pt"
@@ -35,6 +37,7 @@ def create_engine(
     model_backend: str,
     checkpoint: Path,
     max_concurrent: int,
+    observability: Optional[Observability] = None,
 ) -> Engine:
     device = get_device()
     checkpoint_path = checkpoint if checkpoint.exists() else None
@@ -44,7 +47,16 @@ def create_engine(
         print(f"Loading checkpoint: {checkpoint}")
 
     model, _tokenizer = load_backend(model_backend, checkpoint_path, device)
-    return Engine(model, max_concurrent_requests=max_concurrent, device=device)
+    metrics = observability.collector if observability else None
+    engine = Engine(
+        model,
+        max_concurrent_requests=max_concurrent,
+        device=device,
+        metrics_collector=metrics,
+    )
+    if observability:
+        observability.attach(engine)
+    return engine
 
 
 def create_app(
@@ -54,6 +66,8 @@ def create_app(
     engine: Optional[Engine] = None,
     tokenizer=None,
     backend_name: Optional[str] = None,
+    observability: Optional[Observability] = None,
+    enable_observability: bool = True,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -61,15 +75,33 @@ def create_app(
             app.state.engine = engine
             app.state.tokenizer = tokenizer
             app.state.model_backend = backend_name or model_backend
+            if enable_observability:
+                obs = observability or Observability(
+                    model_name=backend_name or model_backend,
+                    runtime="custom",
+                )
+                obs.attach(app.state.engine)
+                app.state.observability = obs
+            else:
+                app.state.observability = observability
         else:
             device = get_device()
             checkpoint_path = checkpoint if checkpoint.exists() else None
+            obs = None
+            if enable_observability:
+                obs = observability or Observability(model_name=model_backend, runtime="custom")
             model, app.state.tokenizer = load_backend(
                 model_backend, checkpoint_path, device
             )
             app.state.engine = Engine(
-                model, max_concurrent_requests=max_concurrent, device=device
+                model,
+                max_concurrent_requests=max_concurrent,
+                device=device,
+                metrics_collector=obs.collector if obs else None,
             )
+            if obs:
+                obs.attach(app.state.engine)
+            app.state.observability = obs
             app.state.model_backend = model_backend
         yield
 
@@ -81,11 +113,14 @@ def create_app(
 
     @app.get("/health")
     def health(request: Request):
-        return {
+        payload = {
             "status": "ok",
             "model": request.app.state.model_backend,
             "backends": list_backends(),
         }
+        if getattr(request.app.state, "observability", None):
+            payload["observability"] = "/observability"
+        return payload
 
     @app.post("/v1/completions", response_model=CompletionResponse)
     def completions(body: CompletionRequest, request: Request):
@@ -103,6 +138,9 @@ def create_app(
             output_token_ids=result.output_token_ids,
             model=request.app.state.model_backend,
         )
+
+    if enable_observability:
+        register_observability_routes(app)
 
     return app
 
@@ -130,6 +168,7 @@ def main():
     print("Docs:  http://{host}:{port}/docs".format(host=args.host, port=args.port))
     print('POST /v1/completions  {"prompt": "...", "max_new_tokens": 20}')
     print("GET  /health")
+    print("GET  /observability  (metrics dashboard)")
     uvicorn.run(server_app, host=args.host, port=args.port)
 
 

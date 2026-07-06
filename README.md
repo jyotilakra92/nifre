@@ -9,6 +9,7 @@ A small, educational LLM inference engine with KV-cache, static batching, contin
 - **Continuous batching** — requests join and leave between decode steps
 - **Model-agnostic API** — plug in backends via `InferenceModel` + `Tokenizer`
 - **FastAPI server** — HTTP completions endpoint with OpenAPI docs
+- **Observability dashboard** — request health, latency, throughput, GPU/runtime, optimization history
 
 ## Project layout
 
@@ -21,6 +22,12 @@ nifre/
 │   │   ├── model_runner.py
 │   │   ├── server.py
 │   │   └── backends/       # Model adapters (gpt today)
+│   └── observability/      # Metrics, dashboard, optimization tracking
+│       ├── metrics_store.py
+│       ├── collector.py
+│       ├── runtime_probe.py
+│       ├── optimization.py
+│       └── dashboard/      # FastAPI dashboard UI
 │   └── model/              # Reference GPT implementation
 │       ├── gpt_model.py
 │       ├── attention.py
@@ -127,6 +134,51 @@ Example response:
 | `--max-concurrent` | `2` | Max concurrent requests (cache slots) |
 | `--host` | `127.0.0.1` | Bind address |
 | `--port` | `8000` | Port |
+
+## Observability dashboard
+
+The inference server ships with a built-in observability dashboard. Start the server as usual, then open:
+
+**Dashboard:** [http://127.0.0.1:8000/observability](http://127.0.0.1:8000/observability)
+
+**Metrics API:**
+
+```bash
+curl -s http://127.0.0.1:8000/observability/api/metrics | python3 -m json.tool
+```
+
+### Dashboard sections
+
+| Section | Metrics |
+|---------|---------|
+| **Request health** | requests/sec, active, queued, completed, error rate, timeout rate |
+| **Latency** | TTFT, total latency, prefill/decode step latency, inter-token latency (P50/P95/P99) |
+| **Throughput** | tokens/sec, input/output tokens/sec, tokens/request, batch size, decode iterations/sec |
+| **GPU / runtime** | GPU util & memory, KV cache memory & utilization, runtime, model, precision |
+| **Optimization history** | baseline vs current latency/throughput, cost improvement, attempted/promoted/rolled back |
+
+### Standalone dashboard (optional)
+
+Poll metrics from a running inference server on a separate port:
+
+```bash
+PYTHONPATH=src:src/model python3 -m observability.dashboard.server \
+  --port 9090 \
+  --metrics-url http://127.0.0.1:8000/observability/api/metrics
+```
+
+### Record optimization events (Python)
+
+```python
+from observability import Observability
+
+obs = Observability(model_name="gpt", runtime="custom")
+obs.attach(engine)
+
+obs.optimization.record_attempt("continuous-batching", details="enabled scheduler v2")
+obs.optimization.record_promotion("continuous-batching")
+obs.optimization.record_rollback("fp8-kv-cache", details="accuracy regression")
+```
 
 ## Static batching CLI
 

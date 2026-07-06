@@ -14,6 +14,12 @@ from tests.test_generate import test_model_runner_via_engine, test_static_batch_
 from tests.test_kv_cache import test_kv_cache_smoke
 from tests.test_backends import test_load_gpt_backend
 from tests.test_scheduler import test_scheduler_smoke
+from tests.test_observability import (
+    test_engine_metrics_smoke,
+    test_observability_routes,
+    test_optimization_tracker,
+    test_percentile,
+)
 from tests.test_server import test_completions_smoke, test_completions_validation, test_health
 
 
@@ -47,6 +53,18 @@ class SmokeTests(unittest.TestCase):
 
     def test_server_completions(self):
         test_completions_smoke()
+
+    def test_observability_percentile(self):
+        test_percentile()
+
+    def test_observability_engine(self):
+        test_engine_metrics_smoke()
+
+    def test_observability_tracker(self):
+        test_optimization_tracker()
+
+    def test_observability_routes(self):
+        test_observability_routes()
 
 
 if __name__ == "__main__":

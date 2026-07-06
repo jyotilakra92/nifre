@@ -62,5 +62,35 @@ class Scheduler:
             self.free_slots.append(request.batch_idx)
             request.batch_idx = None
 
+    def cancel_request(self, request_id: str, status: str = "timeout") -> InferenceRequest:
+        """Remove a request from waiting or running and record it as failed."""
+        remaining = deque()
+        found = None
+        while self.waiting:
+            request = self.waiting.popleft()
+            if request.request_id == request_id:
+                found = request
+            else:
+                remaining.append(request)
+        self.waiting = remaining
+
+        if found is not None:
+            found.state = RequestState.FINISHED
+            found.status = status
+            self.failed[request_id] = found
+            return found
+
+        request = self.running.pop(request_id, None)
+        if request is None:
+            raise KeyError(f"unknown request_id: {request_id}")
+
+        request.state = RequestState.FINISHED
+        request.status = status
+        if request.batch_idx is not None:
+            self.free_slots.append(request.batch_idx)
+            request.batch_idx = None
+        self.failed[request_id] = request
+        return request
+
     def has_work(self) -> bool:
         return bool(self.waiting or self.running)
