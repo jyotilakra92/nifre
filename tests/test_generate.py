@@ -1,8 +1,19 @@
+import sys
+from pathlib import Path
+
 import torch
 
-from model.generate import GPT2_PAD_TOKEN_ID, batch_token_ids, generate
-from model.gpt_model import GPT_CONFIG_124M, GptModel
+SRC = Path(__file__).resolve().parent.parent / "src"
+MODEL = SRC / "model"
+for path in (SRC, MODEL):
+    if str(path) not in sys.path:
+        sys.path.insert(0, str(path))
+
+from inference.backends.gpt import GptInferenceModel
+from inference.batching import batch_token_ids
 from inference.engine import Engine
+from model.generate import GPT2_PAD_TOKEN_ID, generate
+from model.gpt_model import GPT_CONFIG_124M, GptModel
 
 
 def _strip_left_pad(token_row, pad_id=GPT2_PAD_TOKEN_ID):
@@ -12,33 +23,36 @@ def _strip_left_pad(token_row, pad_id=GPT2_PAD_TOKEN_ID):
     return tokens
 
 
-def _tiny_model(device):
+def _tiny_gpt_model(device):
     cfg = dict(GPT_CONFIG_124M)
     cfg["num_layers"] = 2
     cfg["emb_dim"] = 32
     cfg["num_heads"] = 4
     cfg["context_length"] = 64
-    return GptModel(cfg).to(device).eval()
+    return GptInferenceModel(GptModel(cfg).to(device).eval())
 
 
 def test_static_batch_matches_single():
     torch.manual_seed(42)
     device = torch.device("cpu")
-    model = _tiny_model(device)
+    wrapped = _tiny_gpt_model(device)
+    raw_model = wrapped._model
 
     prompts = [[1, 2, 3], [10, 20, 30, 40]]
-    token_ids, input_lens = batch_token_ids(prompts, device)
-    batched = generate(model, token_ids, max_new_tokens=2, input_lens=input_lens)
+    token_ids, input_lens = batch_token_ids(
+        prompts, device, pad_id=wrapped.config.pad_token_id
+    )
+    batched = generate(raw_model, token_ids, max_new_tokens=2, input_lens=input_lens)
 
     for i, tokens in enumerate(prompts):
-        single = generate(model, torch.tensor([tokens], device=device), max_new_tokens=2)
+        single = generate(raw_model, torch.tensor([tokens], device=device), max_new_tokens=2)
         assert _strip_left_pad(batched[i]) == single[0].tolist()
 
 
 def test_model_runner_via_engine():
     torch.manual_seed(42)
     device = torch.device("cpu")
-    model = _tiny_model(device)
+    model = _tiny_gpt_model(device)
 
     engine = Engine(model, max_concurrent_requests=2, device=device)
     req_a = engine.generate([1, 2, 3], max_new_tokens=2)

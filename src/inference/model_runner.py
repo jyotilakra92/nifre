@@ -2,8 +2,9 @@ from typing import List
 
 import torch
 
+from inference.batching import batch_token_ids
 from inference.data_model import InferenceRequest
-from model.generate import batch_token_ids
+from inference.model_interface import InferenceModel
 from model.kv_cache import KVCache
 from model.sampler import sample_greedy
 
@@ -11,7 +12,7 @@ from model.sampler import sample_greedy
 class ModelRunner:
     """Runs prefill and decode forward passes against the model and KV cache."""
 
-    def __init__(self, model, device: torch.device):
+    def __init__(self, model: InferenceModel, device: torch.device):
         self.model = model
         self.device = device
         self.model.eval()
@@ -22,7 +23,11 @@ class ModelRunner:
             cache.reset_slot(request.batch_idx)
 
         token_lists = [request.prompt_token_ids for request in requests]
-        token_ids, input_lens = batch_token_ids(token_lists, self.device)
+        token_ids, input_lens = batch_token_ids(
+            token_lists,
+            self.device,
+            pad_id=self.model.config.pad_token_id,
+        )
         cache_batch_indices = [request.batch_idx for request in requests]
 
         logits = self.model(

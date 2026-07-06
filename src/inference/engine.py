@@ -3,16 +3,22 @@ from typing import List
 
 import torch
 
+from inference.batching import make_kv_cache
 from inference.data_model import InferenceRequest
+from inference.model_interface import InferenceModel
 from inference.model_runner import ModelRunner
 from inference.scheduler import Scheduler
-from model.generate import make_kv_cache
 
 
 class Engine:
     """Continuous-batching inference engine: model + KV cache + scheduler."""
 
-    def __init__(self, model, max_concurrent_requests: int, device: torch.device):
+    def __init__(
+        self,
+        model: InferenceModel,
+        max_concurrent_requests: int,
+        device: torch.device,
+    ):
         self.model = model
         self.device = device
         self.max_concurrent_requests = max_concurrent_requests
@@ -61,7 +67,8 @@ class Engine:
 
     def _ensure_cache(self) -> None:
         if self.cache is None:
-            self.cache = make_kv_cache(self.model, self.device)
+            dtype = getattr(self.model, "dtype", torch.float16)
+            self.cache = make_kv_cache(self.model.config, self.device, dtype=dtype)
             self.cache.init_batch(self.max_concurrent_requests)
 
     def _run_prefill(self, requests: List[InferenceRequest]) -> None:

@@ -36,3 +36,14 @@ class InferenceRequest:
 class ScheduleResult:
     prefill_requests: list
     decode_requests: list
+
+@dataclass(frozen=True)
+class ModelConfig:
+    """Architecture metadata needed by the inference engine and KV cache."""
+
+    num_layers: int
+    max_seq_len: int
+    n_heads: int
+    head_dim: int
+    vocab_size: int
+    pad_token_id: int
