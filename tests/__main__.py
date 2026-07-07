@@ -16,6 +16,8 @@ from tests.test_backends import test_load_gpt_backend
 from tests.test_scheduler import (
     test_mark_prefill_done_rejects_incomplete_prefill,
     test_scheduler_smoke,
+    test_token_budget_limits_decode_batch,
+    test_token_budget_limits_prefill_batch,
 )
 from tests.test_model_runner import (
     test_chunked_prefill_matches_single_step,
@@ -43,6 +45,12 @@ class SmokeTests(unittest.TestCase):
 
     def test_scheduler_chunked_prefill_guard(self):
         test_mark_prefill_done_rejects_incomplete_prefill()
+
+    def test_scheduler_token_budget_prefill(self):
+        test_token_budget_limits_prefill_batch()
+
+    def test_scheduler_token_budget_decode(self):
+        test_token_budget_limits_decode_batch()
 
     def test_engine(self):
         test_engine_smoke()

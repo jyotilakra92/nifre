@@ -26,15 +26,17 @@ class Engine:
         device: torch.device,
         metrics_collector: Optional["MetricsCollector"] = None,
         prefill_chunk_size: int = 128,
+        max_tokens_per_step: int = 2048,
     ):
         self.model = model
         self.device = device
         self.max_concurrent_requests = max_concurrent_requests
-        self.scheduler = Scheduler(max_concurrent_requests)
+        self.scheduler = Scheduler(max_concurrent_requests, max_tokens_per_step)
         self.model_runner = ModelRunner(model, device)
         self.cache = None
         self.metrics = metrics_collector
         self.prefill_chunk_size = prefill_chunk_size
+        self.max_tokens_per_step = max_tokens_per_step
 
     def add_request(self, prompt_token_ids: List[int], max_new_tokens: int) -> str:
         request_id = uuid.uuid4().hex[:8]

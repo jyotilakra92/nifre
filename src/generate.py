@@ -4,8 +4,8 @@ from pathlib import Path
 import tiktoken
 import torch
 
-from gpt_model import GptModel, GPT_CONFIG_124M
-from kv_cache import KVCache
+from model.gpt_model import GptModel, GPT_CONFIG_124M
+from model.kv_cache import KVCache
 from sampler import sample_greedy
 
 GPT2_PAD_TOKEN_ID = 50256
@@ -107,7 +107,7 @@ def main():
     parser.add_argument(
         "--checkpoint",
         type=Path,
-        default=Path(__file__).parent / "checkpoints" / "gpt_model_checkpoint.pt",
+        default=Path(__file__).parent / "model" / "checkpoints" / "gpt_model_checkpoint.pt",
         help="Path to a checkpoint saved as {config, model_state_dict}",
     )
     parser.add_argument(

@@ -6,8 +6,9 @@ from inference.data_model import InferenceRequest, RequestState, ScheduleResult
 class Scheduler:
     """Assigns KV-cache slots and picks prefill/decode batches each step."""
 
-    def __init__(self, max_concurrent_requests: int):
+    def __init__(self, max_concurrent_requests: int, max_tokens_per_step: int = 2048):
         self.max_concurrent_requests = max_concurrent_requests
+        self.max_tokens_per_step = max_tokens_per_step
         self.waiting: deque = deque()
         self.running: dict = {}
         self.completed: dict = {}
@@ -22,17 +23,35 @@ class Scheduler:
     def schedule(self) -> ScheduleResult:
         self._assign_waiting_to_slots()
 
-        prefill_requests = [
-            req for req in self.running.values() if req.state == RequestState.PREFILL
-        ]
-        decode_requests = [
-            req for req in self.running.values() if req.state == RequestState.DECODE
-        ]
+        budget = self.max_tokens_per_step
+        decode_requests = []
+        prefill_requests = []
+
+        for request in self.running.values():
+            if request.state != RequestState.DECODE:
+                continue
+            if budget < 1:
+                break
+            decode_requests.append(request)
+            budget -= 1
+
+        for request in self.running.values():
+            if request.state != RequestState.PREFILL:
+                continue
+            chunk_tokens = self._prefill_chunk_tokens(request)
+            if chunk_tokens > budget:
+                continue
+            prefill_requests.append(request)
+            budget -= chunk_tokens
 
         return ScheduleResult(
             prefill_requests=prefill_requests,
             decode_requests=decode_requests,
         )
+
+    def _prefill_chunk_tokens(self, request: InferenceRequest) -> int:
+        remaining = request.num_prompt_tokens - request.prefill_offset
+        return min(request.prefill_chunk_size, remaining)
 
     def _assign_waiting_to_slots(self) -> None:
         while self.waiting and self.free_slots:
@@ -44,12 +63,12 @@ class Scheduler:
 
     def mark_prefill_done(self, request: InferenceRequest) -> None:
         if request.state != RequestState.PREFILL:
-            raise ValueError(f"expected PREFILL, got {request.state}")   
+            raise ValueError(f"expected PREFILL, got {request.state}")
         if not request.prefill_complete:
             raise ValueError(
                 f"prefill incomplete: offset={request.prefill_offset}, "
                 f"prompt_len={request.num_prompt_tokens}"
-            )     
+            )
         request.state = RequestState.DECODE
 
     def mark_decode_done(self, request: InferenceRequest, token_id: int) -> None:

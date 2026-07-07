@@ -23,6 +23,8 @@ nifre/
 │   │   ├── model_runner.py
 │   │   ├── server.py
 │   │   └── backends/       # Model adapters (gpt today)
+│   ├── generate.py         # Static-batched CLI
+│   ├── sampler.py          # Greedy sampling helper
 │   └── observability/      # Metrics, dashboard, optimization tracking
 │       ├── metrics_store.py
 │       ├── collector.py
@@ -32,8 +34,7 @@ nifre/
 │   └── model/              # Reference GPT implementation
 │       ├── gpt_model.py
 │       ├── attention.py
-│       ├── kv_cache.py
-│       └── generate.py     # Static-batched CLI
+│       └── kv_cache.py
 ├── tests/                  # Smoke tests
 └── requirements.txt
 ```
@@ -155,10 +156,20 @@ engine = Engine(
     max_concurrent_requests=2,
     device=device,
     prefill_chunk_size=512,
+    max_tokens_per_step=1024,
 )
 ```
 
 `add_request()` copies `Engine.prefill_chunk_size` onto each `InferenceRequest`. Short prompts still complete in one step when `len(prompt) <= prefill_chunk_size`.
+
+### Token budget (`max_tokens_per_step`)
+
+Each `engine.step()` caps total tokens processed in that step (default **2048**). The scheduler uses **decode-first** ordering:
+
+1. Add decode requests (1 token each) until budget is exhausted
+2. Add prefill chunks (`min(prefill_chunk_size, prompt remaining)`) for remaining budget
+
+Requests that do not fit are deferred to the next step. This smooths latency under load when many prefills and decodes are active.
 
 ### Lifecycle
 
@@ -227,7 +238,7 @@ obs.optimization.record_rollback("fp8-kv-cache", details="accuracy regression")
 The reference GPT model also supports static batched generation (no continuous scheduler):
 
 ```bash
-PYTHONPATH=src:src/model python3 -m model.generate \
+PYTHONPATH=src:src/model python3 -m generate \
   --prompt "Every effort moves you" \
   --prompt "The cat sat on the mat" \
   --max-new-tokens 20
@@ -241,7 +252,7 @@ from pathlib import Path
 
 from inference.backends.registry import load_backend
 from inference.engine import Engine
-from model.generate import get_device
+from generate import get_device
 
 device = get_device()
 checkpoint = Path("src/model/checkpoints/gpt_model_checkpoint.pt")
@@ -281,7 +292,7 @@ Client
 
 | Component | Role |
 |-----------|------|
-| **Scheduler** | Queue, batch slots, prefill vs decode groups; enforces `prefill_complete` before decode |
+| **Scheduler** | Queue, batch slots, token budget per step (decode-first), enforces `prefill_complete` |
 | **Engine** | Owns cache, calls scheduler + model runner each step; configures `prefill_chunk_size` |
 | **ModelRunner** | Batched prefill chunks + decode forwards + greedy sampling |
 | **KVCache** | Per-slot K/V storage (engine allocates, model uses) |
@@ -307,7 +318,6 @@ See `src/inference/model_interface.py` and `src/inference/backends/gpt.py` for t
 
 ## What is not included yet
 
-- Scheduler token budget (cap tokens per step)
 - PagedAttention
 - Token streaming (SSE)
 - OpenAI-compatible API shape

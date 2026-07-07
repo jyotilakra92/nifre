@@ -12,7 +12,7 @@ for path in (SRC, MODEL):
 from inference.backends.gpt import GptInferenceModel
 from inference.batching import batch_token_ids
 from inference.engine import Engine
-from model.generate import GPT2_PAD_TOKEN_ID, generate
+from generate import GPT2_PAD_TOKEN_ID, generate
 from model.gpt_model import GPT_CONFIG_124M, GptModel
 
 

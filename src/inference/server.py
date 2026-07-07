@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 
 from inference.backends.registry import list_backends, load_backend
 from inference.engine import Engine
-from model.generate import get_device
+from generate import get_device
 from observability import Observability
 from observability.dashboard.server import register_observability_routes
 
