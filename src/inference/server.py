@@ -13,6 +13,7 @@ from starlette.responses import StreamingResponse
 
 from inference.backends.registry import list_backends, load_backend
 from inference.engine import Engine
+from inference.engine_worker import EngineWorker
 from generate import get_device
 from observability import Observability
 from observability.dashboard.server import register_observability_routes
@@ -37,12 +38,20 @@ class CompletionResponse(BaseModel):
 
 
 def stream_completion_events(
+<<<<<<< HEAD
     engine: Engine,
+=======
+    worker: EngineWorker,
+>>>>>>> f172705 (Add support for token streaming)
     tokenizer,
     prompt_token_ids: List[int],
     max_new_tokens: int,
 ) -> Iterator[str]:
+<<<<<<< HEAD
     for token_id in engine.stream_request(prompt_token_ids, max_new_tokens):
+=======
+    for token_id in worker.generate_stream(prompt_token_ids, max_new_tokens):
+>>>>>>> f172705 (Add support for token streaming)
         text = tokenizer.decode([token_id])
         payload = json.dumps({"token_id": token_id, "text": text})
         yield f"data: {payload}\n\n"
@@ -50,14 +59,22 @@ def stream_completion_events(
 
 
 def _completions_blocking(
+<<<<<<< HEAD
     engine: Engine,
+=======
+    worker: EngineWorker,
+>>>>>>> f172705 (Add support for token streaming)
     tokenizer,
     prompt_token_ids: List[int],
     prompt: str,
     max_new_tokens: int,
     model_backend: str,
 ) -> CompletionResponse:
+<<<<<<< HEAD
     result = engine.generate(prompt_token_ids, max_new_tokens=max_new_tokens)
+=======
+    result = worker.generate(prompt_token_ids, max_new_tokens=max_new_tokens)
+>>>>>>> f172705 (Add support for token streaming)
     text = tokenizer.decode(result.prompt_token_ids + result.output_token_ids)
     return CompletionResponse(
         request_id=result.request_id,
@@ -106,6 +123,7 @@ def create_app(
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        worker: Optional[EngineWorker] = None
         if engine is not None:
             app.state.engine = engine
             app.state.tokenizer = tokenizer
@@ -138,7 +156,12 @@ def create_app(
                 obs.attach(app.state.engine)
             app.state.observability = obs
             app.state.model_backend = model_backend
+
+        worker = EngineWorker(app.state.engine)
+        worker.start()
+        app.state.worker = worker
         yield
+        worker.stop()
 
     app = FastAPI(
         title="Inference Engine",
@@ -160,14 +183,22 @@ def create_app(
     @app.post("/v1/completions")
     def completions(body: CompletionRequest, request: Request):
         """Return full JSON (default) or SSE token stream when ``stream=true``."""
+<<<<<<< HEAD
         engine = request.app.state.engine
+=======
+        worker = request.app.state.worker
+>>>>>>> f172705 (Add support for token streaming)
         tokenizer = request.app.state.tokenizer
         token_ids = tokenizer.encode(body.prompt)
 
         if body.stream:
             return StreamingResponse(
                 stream_completion_events(
+<<<<<<< HEAD
                     engine,
+=======
+                    worker,
+>>>>>>> f172705 (Add support for token streaming)
                     tokenizer,
                     token_ids,
                     body.max_new_tokens,
@@ -176,7 +207,11 @@ def create_app(
             )
 
         return _completions_blocking(
+<<<<<<< HEAD
             engine,
+=======
+            worker,
+>>>>>>> f172705 (Add support for token streaming)
             tokenizer,
             token_ids,
             body.prompt,

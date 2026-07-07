@@ -62,13 +62,12 @@ def test_token_callback_emits_all_generated_tokens():
     assert len(emitted) == 3
 
 
-def test_stream_request_matches_generate():
+def test_generate_stream_matches_generate():
     torch.manual_seed(0)
     device = torch.device("cpu")
     model = _tiny_gpt_model(device)
     engine = Engine(model, max_concurrent_requests=2, device=device)
-
-    streamed = list(engine.stream_request([1, 2, 3], max_new_tokens=3))
+    streamed = list(engine.generate_stream([1, 2, 3], max_new_tokens=3))
 
     torch.manual_seed(0)
     engine2 = Engine(model, max_concurrent_requests=2, device=device)
@@ -77,8 +76,7 @@ def test_stream_request_matches_generate():
     assert streamed == result.output_token_ids
     assert len(streamed) == 3
 
-
-def test_stream_request_with_chunked_prefill():
+def test_generate_stream_with_chunked_prefill():
     torch.manual_seed(0)
     device = torch.device("cpu")
     model = _tiny_gpt_model(device)
@@ -90,7 +88,7 @@ def test_stream_request_with_chunked_prefill():
         max_tokens_per_step=4096,
     )
 
-    streamed = list(engine.stream_request([1, 2, 3, 4, 5], max_new_tokens=2))
+    streamed = list(engine.generate_stream([1, 2, 3, 4, 5], max_new_tokens=2))
 
     assert len(streamed) == 2
     result = engine.scheduler.completed.values()
@@ -99,13 +97,11 @@ def test_stream_request_with_chunked_prefill():
     assert streamed == completed.output_token_ids
     assert completed.prefill_offset == 5
 
-
-def test_stream_request_unregisters_callback():
+def test_generate_stream_unregisters_callback():
     torch.manual_seed(0)
     device = torch.device("cpu")
     model = _tiny_gpt_model(device)
     engine = Engine(model, max_concurrent_requests=2, device=device)
 
-    list(engine.stream_request([1, 2, 3], max_new_tokens=1))
-
+    list(engine.generate_stream([1, 2, 3], max_new_tokens=1))
     assert engine._token_callbacks == {}

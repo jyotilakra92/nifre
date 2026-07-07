@@ -9,11 +9,25 @@ for path in (SRC, MODEL):
         sys.path.insert(0, str(path))
 
 from tests.test_attention import test_attention_cache_smoke
+<<<<<<< HEAD
 from tests.test_engine import (
     test_engine_smoke,
     test_stream_request_matches_generate,
     test_stream_request_unregisters_callback,
     test_stream_request_with_chunked_prefill,
+=======
+from tests.test_engine_worker import (
+    test_worker_concurrent_generates,
+    test_worker_concurrent_stream_and_generate,
+    test_worker_generate_matches_engine,
+    test_worker_generate_stream_matches_generate,
+)
+from tests.test_engine import (
+    test_engine_smoke,
+    test_generate_stream_matches_generate,
+    test_generate_stream_unregisters_callback,
+    test_generate_stream_with_chunked_prefill,
+>>>>>>> f172705 (Add support for token streaming)
     test_token_callback_emits_all_generated_tokens,
 )
 from tests.test_generate import test_model_runner_via_engine, test_static_batch_matches_single
@@ -70,6 +84,7 @@ class SmokeTests(unittest.TestCase):
     def test_engine_token_callback(self):
         test_token_callback_emits_all_generated_tokens()
 
+<<<<<<< HEAD
     def test_engine_stream_matches_generate(self):
         test_stream_request_matches_generate()
 
@@ -78,6 +93,28 @@ class SmokeTests(unittest.TestCase):
 
     def test_engine_stream_cleanup(self):
         test_stream_request_unregisters_callback()
+=======
+    def test_engine_generate_stream_matches_generate(self):
+        test_generate_stream_matches_generate()
+
+    def test_engine_generate_stream_chunked_prefill(self):
+        test_generate_stream_with_chunked_prefill()
+
+    def test_engine_generate_stream_cleanup(self):
+        test_generate_stream_unregisters_callback()
+
+    def test_worker_generate(self):
+        test_worker_generate_matches_engine()
+
+    def test_worker_generate_stream(self):
+        test_worker_generate_stream_matches_generate()
+
+    def test_worker_concurrent_generates(self):
+        test_worker_concurrent_generates()
+
+    def test_worker_concurrent_stream_and_generate(self):
+        test_worker_concurrent_stream_and_generate()
+>>>>>>> f172705 (Add support for token streaming)
 
     def test_static_batch(self):
         test_static_batch_matches_single()

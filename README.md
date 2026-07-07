@@ -98,6 +98,8 @@ PYTHONPATH=src:src/model uvicorn inference.server:app --host 127.0.0.1 --port 80
 
 Interactive API docs: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
 
+The server starts a background **EngineWorker** on launch. HTTP handlers submit requests via `generate` / `generate_stream` on the worker; a single thread owns `engine.step()` so concurrent clients batch safely.
+
 ### Endpoints
 
 **Health**
@@ -147,6 +149,7 @@ data: {"token_id": 5678, "text": " world"}
 data: [DONE]
 ```
 
+<<<<<<< HEAD
 Engine-only streaming demo (no HTTP):
 
 ```bash
@@ -154,6 +157,8 @@ PYTHONPATH=src:src/model python3 -m inference.stream_demo \
   --prompt "hello world" --max-new-tokens 5
 ```
 
+=======
+>>>>>>> f172705 (Add support for token streaming)
 ### Server options
 
 | Flag | Default | Description |
@@ -297,6 +302,11 @@ token_ids = tokenizer.encode("Every effort moves you")
 result = engine.generate(token_ids, max_new_tokens=20)
 print(tokenizer.decode(result.prompt_token_ids + result.output_token_ids))
 
+# Streaming request (token-by-token)
+for token_id in engine.generate_stream(token_ids, max_new_tokens=20):
+    print(tokenizer.decode([token_id]), end="", flush=True)
+print()
+
 # Or queue multiple requests and step manually
 engine.add_request(tokenizer.encode("Hello"), max_new_tokens=10)
 engine.add_request(tokenizer.encode("The quick brown fox"), max_new_tokens=10)
@@ -311,14 +321,16 @@ for req in engine.get_completed().values():
 ```text
 Client
   → FastAPI server (server.py)
-    → Engine (scheduler + KV cache lifecycle)
-      → ModelRunner (prefill / decode forwards)
-        → InferenceModel backend (e.g. GPT)
-          → Attention reads/writes KVCache
+    → EngineWorker (background step loop)
+      → Engine (scheduler + KV cache lifecycle)
+        → ModelRunner (prefill / decode forwards)
+          → InferenceModel backend (e.g. GPT)
+            → Attention reads/writes KVCache
 ```
 
 | Component | Role |
 |-----------|------|
+| **EngineWorker** | Single thread owns ``engine.step()``; HTTP handlers submit via ``generate`` / ``generate_stream`` |
 | **Scheduler** | Queue, batch slots, token budget per step (decode-first), enforces `prefill_complete` |
 | **Engine** | Owns cache, calls scheduler + model runner each step; configures `prefill_chunk_size` |
 | **ModelRunner** | Batched prefill chunks + decode forwards + greedy sampling |

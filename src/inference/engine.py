@@ -55,12 +55,12 @@ class Engine:
             self.metrics.on_request_enqueued()
         return request_id
 
-    def stream_request(
+    def generate_stream(
         self,
         prompt_token_ids: List[int],
         max_new_tokens: int,
     ) -> Iterator[int]:
-        """Yield generated token ids as they are produced."""
+        """Yield output token ids as they are produced (streaming counterpart to ``generate``)."""
         request_id = self.add_request(prompt_token_ids, max_new_tokens)
         queue: Queue[int] = Queue()
         self.register_token_callback(request_id, queue.put)
@@ -107,7 +107,7 @@ class Engine:
         max_new_tokens: int,
         timeout_seconds: Optional[float] = None,
     ) -> InferenceRequest:
-        """Queue one request and block until it finishes."""
+        """Queue one request and block until it finishes (non-streaming counterpart to ``generate_stream``)."""
         request_id = self.add_request(prompt_token_ids, max_new_tokens)
         deadline = time.time() + timeout_seconds if timeout_seconds else None
 
