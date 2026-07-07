@@ -44,7 +44,12 @@ class Scheduler:
 
     def mark_prefill_done(self, request: InferenceRequest) -> None:
         if request.state != RequestState.PREFILL:
-            raise ValueError(f"expected PREFILL, got {request.state}")
+            raise ValueError(f"expected PREFILL, got {request.state}")   
+        if not request.prefill_complete:
+            raise ValueError(
+                f"prefill incomplete: offset={request.prefill_offset}, "
+                f"prompt_len={request.num_prompt_tokens}"
+            )     
         request.state = RequestState.DECODE
 
     def mark_decode_done(self, request: InferenceRequest, token_id: int) -> None:

@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 
 import torch
 
@@ -18,11 +18,23 @@ class ModelRunner:
         self.model.eval()
 
     @torch.no_grad()
-    def prefill(self, cache: KVCache, requests: List[InferenceRequest]) -> List[int]:
-        for request in requests:
-            cache.reset_slot(request.batch_idx)
+    def prefill(self, cache: KVCache, requests: List[InferenceRequest]) -> List[Optional[int]]:
+        """Process one prefill chunk per request.
 
-        token_lists = [request.prompt_token_ids for request in requests]
+        Each request advances ``prefill_offset`` by the number of prompt tokens
+        processed this step. Returns the first sampled token when the full prompt
+        has been cached, otherwise ``None``.
+        """
+        for request in requests:
+            if request.prefill_offset == 0:
+                cache.reset_slot(request.batch_idx)
+
+        token_lists = []
+        for request in requests:
+            start = request.prefill_offset
+            end = min(start + request.prefill_chunk_size, request.num_prompt_tokens)
+            token_lists.append(request.prompt_token_ids[start:end])
+
         token_ids, input_lens = batch_token_ids(
             token_lists,
             self.device,
@@ -37,10 +49,17 @@ class ModelRunner:
             cache_batch_indices=cache_batch_indices,
         )
 
-        return [
-            sample_greedy(logits[i : i + 1, -1, :]).item()
-            for i in range(len(requests))
-        ]
+        results: List[Optional[int]] = []
+        for i, request in enumerate(requests):
+            chunk_len = input_lens[i].item()
+            request.prefill_offset += chunk_len
+
+            if request.prefill_complete:
+                results.append(sample_greedy(logits[i : i + 1, -1, :]).item())
+            else:
+                results.append(None)
+
+        return results
 
     @torch.no_grad()
     def decode(self, cache: KVCache, requests: List[InferenceRequest]) -> List[int]:

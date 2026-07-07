@@ -39,9 +39,10 @@ class MetricsCollector:
         self.store.record_prefill_step(duration_sec, len(requests))
         now = time.time()
         for request in requests:
-            request.prefill_duration_sec = duration_sec
-            request.first_token_at = now
-            request.last_token_at = now
+            request.prefill_duration_sec = (request.prefill_duration_sec or 0.0) + duration_sec
+            if request.prefill_complete:
+                request.first_token_at = now
+                request.last_token_at = now
 
     def on_decode_batch(self, batch_size: int, duration_sec: float) -> None:
         self.store.record_decode_step(duration_sec, batch_size)

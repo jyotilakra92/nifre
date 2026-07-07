@@ -10,6 +10,11 @@ def make_req(rid: str) -> InferenceRequest:
     )
 
 
+def finish_prefill(request: InferenceRequest) -> None:
+    """Simulate a completed prompt cache fill for scheduler unit tests."""
+    request.prefill_offset = request.num_prompt_tokens
+
+
 def test_scheduler_smoke():
     scheduler = Scheduler(max_concurrent_requests=2)
     scheduler.add_request(make_req("A"))
@@ -23,6 +28,7 @@ def test_scheduler_smoke():
     assert len(scheduler.running) == 2
 
     for req in result.prefill_requests:
+        finish_prefill(req)
         scheduler.mark_prefill_done(req)
 
     result = scheduler.schedule()
@@ -45,3 +51,20 @@ def test_scheduler_smoke():
     assert result.prefill_requests[0].request_id == "C"
     assert len(result.decode_requests) == 1
     assert result.decode_requests[0].request_id == "B"
+
+
+def test_mark_prefill_done_rejects_incomplete_prefill():
+    scheduler = Scheduler(max_concurrent_requests=1)
+    scheduler.add_request(make_req("A"))
+    scheduler.schedule()
+
+    request = scheduler.running["A"]
+    assert request.prefill_offset == 0
+
+    try:
+        scheduler.mark_prefill_done(request)
+        raise AssertionError("expected ValueError for incomplete prefill")
+    except ValueError as exc:
+        assert "prefill incomplete" in str(exc)
+
+    assert request.state.value == "prefill"

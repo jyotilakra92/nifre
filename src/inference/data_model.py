@@ -26,7 +26,13 @@ class InferenceRequest:
     finished_at: Optional[float] = None
     last_token_at: Optional[float] = None
     prefill_duration_sec: Optional[float] = None
+    prefill_offset: int = 0
+    prefill_chunk_size: int = 128
     status: str = "ok"
+
+    @property
+    def prefill_complete(self) -> bool:
+        return self.prefill_offset >= self.num_prompt_tokens
 
     @property
     def num_prompt_tokens(self) -> int:

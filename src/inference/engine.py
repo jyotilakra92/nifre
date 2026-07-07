@@ -25,6 +25,7 @@ class Engine:
         max_concurrent_requests: int,
         device: torch.device,
         metrics_collector: Optional["MetricsCollector"] = None,
+        prefill_chunk_size: int = 128,
     ):
         self.model = model
         self.device = device
@@ -33,6 +34,7 @@ class Engine:
         self.model_runner = ModelRunner(model, device)
         self.cache = None
         self.metrics = metrics_collector
+        self.prefill_chunk_size = prefill_chunk_size
 
     def add_request(self, prompt_token_ids: List[int], max_new_tokens: int) -> str:
         request_id = uuid.uuid4().hex[:8]
@@ -40,6 +42,7 @@ class Engine:
             request_id=request_id,
             prompt_token_ids=prompt_token_ids,
             max_new_tokens=max_new_tokens,
+            prefill_chunk_size=self.prefill_chunk_size,
         )
         self.scheduler.add_request(request)
         if self.metrics:
@@ -112,6 +115,8 @@ class Engine:
             self.metrics.on_prefill_batch(requests, duration)
 
         for request, token_id in zip(requests, token_ids):
+            if token_id is None:
+                continue
             self.scheduler.mark_prefill_done(request)
             self.scheduler.mark_decode_done(request, token_id)
             if self.metrics:

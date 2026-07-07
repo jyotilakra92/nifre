@@ -13,7 +13,15 @@ from tests.test_engine import test_engine_smoke
 from tests.test_generate import test_model_runner_via_engine, test_static_batch_matches_single
 from tests.test_kv_cache import test_kv_cache_smoke
 from tests.test_backends import test_load_gpt_backend
-from tests.test_scheduler import test_scheduler_smoke
+from tests.test_scheduler import (
+    test_mark_prefill_done_rejects_incomplete_prefill,
+    test_scheduler_smoke,
+)
+from tests.test_model_runner import (
+    test_chunked_prefill_matches_single_step,
+    test_engine_add_request_uses_prefill_chunk_size,
+    test_engine_with_small_prefill_chunks,
+)
 from tests.test_observability import (
     test_engine_metrics_smoke,
     test_observability_routes,
@@ -32,6 +40,9 @@ class SmokeTests(unittest.TestCase):
 
     def test_scheduler(self):
         test_scheduler_smoke()
+
+    def test_scheduler_chunked_prefill_guard(self):
+        test_mark_prefill_done_rejects_incomplete_prefill()
 
     def test_engine(self):
         test_engine_smoke()
@@ -53,6 +64,15 @@ class SmokeTests(unittest.TestCase):
 
     def test_server_completions(self):
         test_completions_smoke()
+
+    def test_model_runner_chunked(self):
+        test_chunked_prefill_matches_single_step()
+
+    def test_engine_chunked_prefill(self):
+        test_engine_with_small_prefill_chunks()
+
+    def test_engine_prefill_chunk_size(self):
+        test_engine_add_request_uses_prefill_chunk_size()
 
     def test_observability_percentile(self):
         test_percentile()

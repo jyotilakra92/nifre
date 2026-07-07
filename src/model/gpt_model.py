@@ -45,8 +45,12 @@ class GptModel(nn.Module):
                 raise ValueError("input_lens is required for batched prefill with kv_cache")
             for i in range(batch_size):
                 valid_len = input_lens[i].item()
+                if cache_batch_indices is not None:
+                    start_pos = kv_cache.pos[cache_batch_indices[i]].item()
+                else:
+                    start_pos = kv_cache.pos[i].item()
                 positions[i, seq_len - valid_len :] = torch.arange(
-                    valid_len, device=in_idx.device
+                    start_pos, start_pos + valid_len, device=in_idx.device
                 )
 
         x = self.token_embedding(in_idx) + self.position_embedding(positions)

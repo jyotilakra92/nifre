@@ -7,6 +7,7 @@ A small, educational LLM inference engine with KV-cache, static batching, contin
 - **KV cache** — prefill + decode without recomputing past attention
 - **Static batching** — run multiple prompts in one forward pass (fixed batch)
 - **Continuous batching** — requests join and leave between decode steps
+- **Chunked prefill** — long prompts are cached in fixed-size chunks so decode can interleave
 - **Model-agnostic API** — plug in backends via `InferenceModel` + `Tokenizer`
 - **FastAPI server** — HTTP completions endpoint with OpenAPI docs
 - **Observability dashboard** — request health, latency, throughput, GPU/runtime, optimization history
@@ -135,6 +136,47 @@ Example response:
 | `--host` | `127.0.0.1` | Bind address |
 | `--port` | `8000` | Port |
 
+## Chunked prefill
+
+Long prompts are no longer processed in a single prefill forward. Each request caches its prompt in chunks (default **128 tokens** per step), staying in `PREFILL` until `prefill_offset` reaches the prompt length. That lets other requests decode between chunks.
+
+```text
+Request A (long prompt):  PREFILL chunk → PREFILL chunk → DECODE…
+Request B (short prompt):           PREFILL → DECODE…  (interleaved with A)
+```
+
+### Configuration
+
+Set chunk size when constructing the engine:
+
+```python
+engine = Engine(
+    model,
+    max_concurrent_requests=2,
+    device=device,
+    prefill_chunk_size=512,
+)
+```
+
+`add_request()` copies `Engine.prefill_chunk_size` onto each `InferenceRequest`. Short prompts still complete in one step when `len(prompt) <= prefill_chunk_size`.
+
+### Lifecycle
+
+| Step | What happens |
+|------|----------------|
+| `model_runner.prefill` | Processes `prompt[offset : offset + chunk_size]`, advances `prefill_offset` |
+| Intermediate chunk | Returns `None`; request stays in `PREFILL` |
+| Final chunk | Returns first sampled token; engine calls `mark_prefill_done` |
+| `scheduler.mark_prefill_done` | Requires `prefill_complete`; transitions to `DECODE` |
+
+### Tests
+
+Chunking is covered in `tests/test_model_runner.py` and `tests/test_scheduler.py`:
+
+```bash
+PYTHONPATH=src:src/model python3 -m tests
+```
+
 ## Observability dashboard
 
 The inference server ships with a built-in observability dashboard. Start the server as usual, then open:
@@ -239,9 +281,9 @@ Client
 
 | Component | Role |
 |-----------|------|
-| **Scheduler** | Queue, batch slots, prefill vs decode groups |
-| **Engine** | Owns cache, calls scheduler + model runner each step |
-| **ModelRunner** | Batched forward + greedy sampling |
+| **Scheduler** | Queue, batch slots, prefill vs decode groups; enforces `prefill_complete` before decode |
+| **Engine** | Owns cache, calls scheduler + model runner each step; configures `prefill_chunk_size` |
+| **ModelRunner** | Batched prefill chunks + decode forwards + greedy sampling |
 | **KVCache** | Per-slot K/V storage (engine allocates, model uses) |
 | **Backend** | Weights, tokenizer, cache-aware forward |
 
@@ -265,6 +307,7 @@ See `src/inference/model_interface.py` and `src/inference/backends/gpt.py` for t
 
 ## What is not included yet
 
+- Scheduler token budget (cap tokens per step)
 - PagedAttention
 - Token streaming (SSE)
 - OpenAI-compatible API shape
