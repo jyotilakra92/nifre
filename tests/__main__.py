@@ -10,12 +10,15 @@ for path in (SRC, MODEL):
 
 from tests.test_attention import test_attention_cache_smoke
 <<<<<<< HEAD
+<<<<<<< HEAD
 from tests.test_engine import (
     test_engine_smoke,
     test_stream_request_matches_generate,
     test_stream_request_unregisters_callback,
     test_stream_request_with_chunked_prefill,
 =======
+=======
+>>>>>>> f172705 (Add support for token streaming)
 from tests.test_engine_worker import (
     test_worker_concurrent_generates,
     test_worker_concurrent_stream_and_generate,
@@ -27,6 +30,9 @@ from tests.test_engine import (
     test_generate_stream_matches_generate,
     test_generate_stream_unregisters_callback,
     test_generate_stream_with_chunked_prefill,
+<<<<<<< HEAD
+>>>>>>> f172705 (Add support for token streaming)
+=======
 >>>>>>> f172705 (Add support for token streaming)
     test_token_callback_emits_all_generated_tokens,
 )
@@ -85,6 +91,7 @@ class SmokeTests(unittest.TestCase):
         test_token_callback_emits_all_generated_tokens()
 
 <<<<<<< HEAD
+<<<<<<< HEAD
     def test_engine_stream_matches_generate(self):
         test_stream_request_matches_generate()
 
@@ -94,6 +101,8 @@ class SmokeTests(unittest.TestCase):
     def test_engine_stream_cleanup(self):
         test_stream_request_unregisters_callback()
 =======
+=======
+>>>>>>> f172705 (Add support for token streaming)
     def test_engine_generate_stream_matches_generate(self):
         test_generate_stream_matches_generate()
 
@@ -114,6 +123,9 @@ class SmokeTests(unittest.TestCase):
 
     def test_worker_concurrent_stream_and_generate(self):
         test_worker_concurrent_stream_and_generate()
+<<<<<<< HEAD
+>>>>>>> f172705 (Add support for token streaming)
+=======
 >>>>>>> f172705 (Add support for token streaming)
 
     def test_static_batch(self):

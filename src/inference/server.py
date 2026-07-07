@@ -38,20 +38,12 @@ class CompletionResponse(BaseModel):
 
 
 def stream_completion_events(
-<<<<<<< HEAD
-    engine: Engine,
-=======
     worker: EngineWorker,
->>>>>>> f172705 (Add support for token streaming)
     tokenizer,
     prompt_token_ids: List[int],
     max_new_tokens: int,
 ) -> Iterator[str]:
-<<<<<<< HEAD
-    for token_id in engine.stream_request(prompt_token_ids, max_new_tokens):
-=======
     for token_id in worker.generate_stream(prompt_token_ids, max_new_tokens):
->>>>>>> f172705 (Add support for token streaming)
         text = tokenizer.decode([token_id])
         payload = json.dumps({"token_id": token_id, "text": text})
         yield f"data: {payload}\n\n"
@@ -59,22 +51,14 @@ def stream_completion_events(
 
 
 def _completions_blocking(
-<<<<<<< HEAD
-    engine: Engine,
-=======
     worker: EngineWorker,
->>>>>>> f172705 (Add support for token streaming)
     tokenizer,
     prompt_token_ids: List[int],
     prompt: str,
     max_new_tokens: int,
     model_backend: str,
 ) -> CompletionResponse:
-<<<<<<< HEAD
-    result = engine.generate(prompt_token_ids, max_new_tokens=max_new_tokens)
-=======
     result = worker.generate(prompt_token_ids, max_new_tokens=max_new_tokens)
->>>>>>> f172705 (Add support for token streaming)
     text = tokenizer.decode(result.prompt_token_ids + result.output_token_ids)
     return CompletionResponse(
         request_id=result.request_id,
@@ -184,7 +168,11 @@ def create_app(
     def completions(body: CompletionRequest, request: Request):
         """Return full JSON (default) or SSE token stream when ``stream=true``."""
 <<<<<<< HEAD
+<<<<<<< HEAD
         engine = request.app.state.engine
+=======
+        worker = request.app.state.worker
+>>>>>>> f172705 (Add support for token streaming)
 =======
         worker = request.app.state.worker
 >>>>>>> f172705 (Add support for token streaming)
@@ -195,7 +183,11 @@ def create_app(
             return StreamingResponse(
                 stream_completion_events(
 <<<<<<< HEAD
+<<<<<<< HEAD
                     engine,
+=======
+                    worker,
+>>>>>>> f172705 (Add support for token streaming)
 =======
                     worker,
 >>>>>>> f172705 (Add support for token streaming)
@@ -208,7 +200,11 @@ def create_app(
 
         return _completions_blocking(
 <<<<<<< HEAD
+<<<<<<< HEAD
             engine,
+=======
+            worker,
+>>>>>>> f172705 (Add support for token streaming)
 =======
             worker,
 >>>>>>> f172705 (Add support for token streaming)
