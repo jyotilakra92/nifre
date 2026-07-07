@@ -167,30 +167,14 @@ def create_app(
     @app.post("/v1/completions")
     def completions(body: CompletionRequest, request: Request):
         """Return full JSON (default) or SSE token stream when ``stream=true``."""
-<<<<<<< HEAD
-<<<<<<< HEAD
-        engine = request.app.state.engine
-=======
         worker = request.app.state.worker
->>>>>>> f172705 (Add support for token streaming)
-=======
-        worker = request.app.state.worker
->>>>>>> f172705 (Add support for token streaming)
         tokenizer = request.app.state.tokenizer
         token_ids = tokenizer.encode(body.prompt)
 
         if body.stream:
             return StreamingResponse(
                 stream_completion_events(
-<<<<<<< HEAD
-<<<<<<< HEAD
-                    engine,
-=======
                     worker,
->>>>>>> f172705 (Add support for token streaming)
-=======
-                    worker,
->>>>>>> f172705 (Add support for token streaming)
                     tokenizer,
                     token_ids,
                     body.max_new_tokens,
@@ -199,15 +183,7 @@ def create_app(
             )
 
         return _completions_blocking(
-<<<<<<< HEAD
-<<<<<<< HEAD
-            engine,
-=======
             worker,
->>>>>>> f172705 (Add support for token streaming)
-=======
-            worker,
->>>>>>> f172705 (Add support for token streaming)
             tokenizer,
             token_ids,
             body.prompt,
