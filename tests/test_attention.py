@@ -2,9 +2,10 @@ import torch
 
 from model.attention import MultiHeadAttention
 from inference.kv_cache import KVCache
+from inference.paged_kv_cache import PagedKVCache
 
 
-def test_attention_cache_smoke():
+def _run_attention_cache_smoke(cache):
     torch.manual_seed(0)
     d_in = d_out = 8
     num_heads = 2
@@ -19,16 +20,6 @@ def test_attention_cache_smoke():
         num_heads=num_heads,
     )
     attn.eval()
-
-    cache = KVCache(
-        num_layers=num_layers,
-        max_seq_len=16,
-        n_heads=num_heads,
-        head_dim=head_dim,
-        device="cpu",
-        dtype=torch.float32,
-    )
-    cache.init_batch(1)
 
     x_prefill = torch.randn(1, 3, d_in)
     out_prefill = attn(x_prefill, kv_cache=cache, layer_id=0)
@@ -72,3 +63,30 @@ def test_attention_cache_smoke():
     x_train = torch.randn(2, 4, d_in)
     out_train = attn(x_train)
     assert out_train.shape == (2, 4, d_out)
+
+
+def test_attention_cache_smoke():
+    cache = KVCache(
+        num_layers=2,
+        max_seq_len=16,
+        n_heads=2,
+        head_dim=4,
+        device="cpu",
+        dtype=torch.float32,
+    )
+    cache.init_batch(1)
+    _run_attention_cache_smoke(cache)
+
+
+def test_attention_paged_cache_smoke():
+    cache = PagedKVCache(
+        num_layers=2,
+        max_seq_len=16,
+        n_heads=2,
+        head_dim=4,
+        device="cpu",
+        dtype=torch.float32,
+        block_size=8,
+    )
+    cache.init_batch(1)
+    _run_attention_cache_smoke(cache)

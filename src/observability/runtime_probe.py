@@ -27,13 +27,22 @@ def dtype_to_precision(dtype: torch.dtype) -> str:
     return mapping.get(dtype, "fp16")
 
 
+def _is_paged_cache(cache) -> bool:
+    return hasattr(cache, "allocated_blocks") and hasattr(cache, "block_size")
+
+
 def kv_cache_bytes(cache) -> int:
     if cache is None or cache.k is None:
         return 0
     elem_size = torch.tensor([], dtype=cache.dtype).element_size()
-    per_tensor = (
-        cache.batch_size * cache.max_seq_len * cache.n_heads * cache.head_dim * elem_size
-    )
+    if _is_paged_cache(cache):
+        per_tensor = (
+            cache.num_blocks * cache.block_size * cache.n_heads * cache.head_dim * elem_size
+        )
+    else:
+        per_tensor = (
+            cache.batch_size * cache.max_seq_len * cache.n_heads * cache.head_dim * elem_size
+        )
     return int(per_tensor * 2 * cache.num_layers)
 
 
@@ -47,7 +56,13 @@ def kv_cache_used_bytes(cache) -> int:
 
 
 def kv_cache_utilization(cache) -> float:
-    if cache is None or cache.pos is None or cache.batch_size == 0:
+    if cache is None:
+        return 0.0
+    if _is_paged_cache(cache):
+        if cache.num_blocks == 0:
+            return 0.0
+        return float(cache.allocated_blocks) / cache.num_blocks
+    if cache.pos is None or cache.batch_size == 0:
         return 0.0
     capacity = cache.batch_size * cache.max_seq_len
     if capacity == 0:

@@ -8,7 +8,39 @@ for path in (SRC, MODEL):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
-from tests.test_attention import test_attention_cache_smoke
+from tests.test_paged_kv_cache import (
+    test_paged_kv_cache_block_growth,
+    test_paged_kv_cache_reset_slot_frees_blocks,
+    test_paged_kv_cache_smoke,
+)
+from tests.test_block_table import (
+    test_clear_allows_block_reuse,
+    test_clear_frees_blocks_to_allocator,
+    test_ensure_capacity_grows_with_sequence,
+    test_ensure_capacity_idempotent,
+    test_ensure_capacity_rejects_negative_total,
+    test_ensure_capacity_single_block,
+    test_ensure_capacity_zero_tokens,
+    test_init_rejects_invalid_block_size,
+    test_pool_exhausted_propagates,
+    test_resolve_first_and_second_block,
+    test_resolve_offset_within_block,
+    test_resolve_unallocated_token_raises,
+)
+from tests.test_block_allocator import (
+    test_allocate_and_free,
+    test_allocate_many_rejects_invalid_count,
+    test_block_reuse_after_free,
+    test_double_free_rejected,
+    test_free_many_duplicate_rejected,
+    test_free_many_empty_list,
+    test_free_out_of_range_rejected,
+    test_init_rejects_invalid_size,
+    test_pool_exhausted,
+    test_single_allocate_wrapper,
+    test_utilization,
+)
+from tests.test_attention import test_attention_cache_smoke, test_attention_paged_cache_smoke
 from tests.test_engine_worker import (
     test_worker_concurrent_generates,
     test_worker_concurrent_stream_and_generate,
@@ -55,8 +87,41 @@ class SmokeTests(unittest.TestCase):
     def test_kv_cache(self):
         test_kv_cache_smoke()
 
+    def test_block_allocator(self):
+        test_init_rejects_invalid_size()
+        test_allocate_and_free()
+        test_single_allocate_wrapper()
+        test_block_reuse_after_free()
+        test_pool_exhausted()
+        test_free_out_of_range_rejected()
+        test_double_free_rejected()
+        test_free_many_duplicate_rejected()
+        test_utilization()
+        test_free_many_empty_list()
+        test_allocate_many_rejects_invalid_count()
+
+    def test_block_table(self):
+        test_init_rejects_invalid_block_size()
+        test_ensure_capacity_zero_tokens()
+        test_ensure_capacity_single_block()
+        test_ensure_capacity_idempotent()
+        test_ensure_capacity_grows_with_sequence()
+        test_ensure_capacity_rejects_negative_total()
+        test_resolve_first_and_second_block()
+        test_resolve_offset_within_block()
+        test_resolve_unallocated_token_raises()
+        test_clear_frees_blocks_to_allocator()
+        test_clear_allows_block_reuse()
+        test_pool_exhausted_propagates()
+
+    def test_paged_kv_cache(self):
+        test_paged_kv_cache_smoke()
+        test_paged_kv_cache_block_growth()
+        test_paged_kv_cache_reset_slot_frees_blocks()
+
     def test_attention(self):
         test_attention_cache_smoke()
+        test_attention_paged_cache_smoke()
 
     def test_scheduler(self):
         test_scheduler_smoke()

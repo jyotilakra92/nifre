@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Callable, Iterator, List, Optional
 
 import torch
 
-from inference.batching import make_kv_cache
+from inference.batching import make_kv_cache, make_paged_kv_cache
 from inference.data_model import InferenceRequest, RequestState
 from inference.model_interface import InferenceModel
 from inference.model_runner import ModelRunner
@@ -30,6 +30,7 @@ class Engine:
         metrics_collector: Optional["MetricsCollector"] = None,
         prefill_chunk_size: int = 128,
         max_tokens_per_step: int = 2048,
+        use_paged_kv_cache: bool = True,
     ):
         self.model = model
         self.device = device
@@ -40,6 +41,7 @@ class Engine:
         self.metrics = metrics_collector
         self.prefill_chunk_size = prefill_chunk_size
         self.max_tokens_per_step = max_tokens_per_step
+        self.use_paged_kv_cache = use_paged_kv_cache
         self._token_callbacks: dict[str, TokenCallback] = {}
 
     def add_request(self, prompt_token_ids: List[int], max_new_tokens: int) -> str:
@@ -144,7 +146,10 @@ class Engine:
     def _ensure_cache(self) -> None:
         if self.cache is None:
             dtype = getattr(self.model, "dtype", torch.float16)
-            self.cache = make_kv_cache(self.model.config, self.device, dtype=dtype)
+            if self.use_paged_kv_cache:
+                self.cache = make_paged_kv_cache(self.model.config, self.device, dtype=dtype)
+            else:
+                self.cache = make_kv_cache(self.model.config, self.device, dtype=dtype)
             self.cache.init_batch(self.max_concurrent_requests)
 
     def _emit_token(self, request_id: str, token_id: int) -> None:

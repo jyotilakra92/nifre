@@ -2,6 +2,7 @@ import torch
 
 from inference.data_model import ModelConfig
 from inference.kv_cache import KVCache
+from inference.paged_kv_cache import PagedKVCache
 
 
 def batch_token_ids(token_lists, device, pad_id):
@@ -28,4 +29,23 @@ def make_kv_cache(model_config: ModelConfig, device, dtype=None):
         head_dim=model_config.head_dim,
         device=device,
         dtype=dtype,
+    )
+
+
+def make_paged_kv_cache(
+    model_config: ModelConfig,
+    device,
+    dtype=None,
+    block_size: int | None = None,
+) -> PagedKVCache:
+    if dtype is None:
+        dtype = torch.float16
+    return PagedKVCache(
+        num_layers=model_config.num_layers,
+        max_seq_len=model_config.max_seq_len,
+        n_heads=model_config.n_heads,
+        head_dim=model_config.head_dim,
+        device=device,
+        dtype=dtype,
+        block_size=block_size or model_config.block_size,
     )

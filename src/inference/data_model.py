@@ -59,3 +59,4 @@ class ModelConfig:
     head_dim: int
     vocab_size: int
     pad_token_id: int
+    block_size: int = 16

@@ -1,9 +1,12 @@
-from typing import List, Protocol
+from typing import List, Protocol, Union
 
 import torch
 
 from inference.data_model import ModelConfig
 from inference.kv_cache import KVCache
+from inference.paged_kv_cache import PagedKVCache
+
+KVCacheType = Union[KVCache, PagedKVCache]
 
 
 class Tokenizer(Protocol):
@@ -29,7 +32,7 @@ class InferenceModel(Protocol):
     def __call__(
         self,
         token_ids: torch.Tensor,
-        kv_cache: KVCache = None,
+        kv_cache: KVCacheType = None,
         input_lens: torch.Tensor = None,
         cache_batch_indices: List[int] = None,
     ) -> torch.Tensor:

@@ -324,7 +324,8 @@ Client
 | **Scheduler** | Queue, batch slots, token budget per step (decode-first), enforces `prefill_complete` |
 | **Engine** | Owns cache, calls scheduler + model runner each step; configures `prefill_chunk_size` |
 | **ModelRunner** | Batched prefill chunks + decode forwards + greedy sampling |
-| **KVCache** | Per-slot K/V storage (engine allocates, model uses) |
+| **KVCache** | Dense per-slot storage (optional via `use_paged_kv_cache=False`) |
+| **PagedKVCache** | Block-pooled K/V storage (engine default) |
 | **Backend** | Weights, tokenizer, cache-aware forward |
 
 ## Adding a new model backend
@@ -347,7 +348,7 @@ See `src/inference/model_interface.py` and `src/inference/backends/gpt.py` for t
 
 ## What is not included yet
 
-- PagedAttention
+- Fused paged-attention GPU kernels
 - OpenAI-compatible streaming response shape
 - Production auth, rate limits, or multi-GPU serving
 

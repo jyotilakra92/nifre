@@ -4,8 +4,7 @@ import torch
 
 from inference.batching import batch_token_ids
 from inference.data_model import InferenceRequest
-from inference.model_interface import InferenceModel
-from inference.kv_cache import KVCache
+from inference.model_interface import InferenceModel, KVCacheType
 from sampler import sample_greedy
 
 
@@ -18,7 +17,7 @@ class ModelRunner:
         self.model.eval()
 
     @torch.no_grad()
-    def prefill(self, cache: KVCache, requests: List[InferenceRequest]) -> List[Optional[int]]:
+    def prefill(self, cache: KVCacheType, requests: List[InferenceRequest]) -> List[Optional[int]]:
         """Process one prefill chunk per request.
 
         Each request advances ``prefill_offset`` by the number of prompt tokens
@@ -62,7 +61,7 @@ class ModelRunner:
         return results
 
     @torch.no_grad()
-    def decode(self, cache: KVCache, requests: List[InferenceRequest]) -> List[int]:
+    def decode(self, cache: KVCacheType, requests: List[InferenceRequest]) -> List[int]:
         tokens = [[request.output_token_ids[-1]] for request in requests]
         token_ids = torch.tensor(tokens, device=self.device)
         cache_batch_indices = [request.batch_idx for request in requests]
