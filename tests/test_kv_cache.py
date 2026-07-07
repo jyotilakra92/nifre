@@ -1,6 +1,6 @@
 import torch
 
-from model.kv_cache import KVCache
+from inference.kv_cache import KVCache
 
 
 def test_kv_cache_smoke():

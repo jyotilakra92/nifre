@@ -5,7 +5,7 @@ import torch
 from inference.batching import batch_token_ids
 from inference.data_model import InferenceRequest
 from inference.model_interface import InferenceModel
-from model.kv_cache import KVCache
+from inference.kv_cache import KVCache
 from sampler import sample_greedy
 
 

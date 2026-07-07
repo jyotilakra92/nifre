@@ -5,7 +5,7 @@ import tiktoken
 import torch
 
 from model.gpt_model import GptModel, GPT_CONFIG_124M
-from model.kv_cache import KVCache
+from inference.kv_cache import KVCache
 from sampler import sample_greedy
 
 GPT2_PAD_TOKEN_ID = 50256

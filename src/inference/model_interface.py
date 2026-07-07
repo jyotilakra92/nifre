@@ -3,7 +3,7 @@ from typing import List, Protocol
 import torch
 
 from inference.data_model import ModelConfig
-from model.kv_cache import KVCache
+from inference.kv_cache import KVCache
 
 
 class Tokenizer(Protocol):

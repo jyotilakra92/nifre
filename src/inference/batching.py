@@ -1,7 +1,7 @@
 import torch
 
 from inference.data_model import ModelConfig
-from model.kv_cache import KVCache
+from inference.kv_cache import KVCache
 
 
 def batch_token_ids(token_lists, device, pad_id):

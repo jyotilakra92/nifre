@@ -1,7 +1,7 @@
 import torch
 
 from model.attention import MultiHeadAttention
-from model.kv_cache import KVCache
+from inference.kv_cache import KVCache
 
 
 def test_attention_cache_smoke():

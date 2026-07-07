@@ -20,6 +20,7 @@ nifre/
 │   ├── inference/          # Engine, scheduler, server, backends
 │   │   ├── engine.py
 │   │   ├── scheduler.py
+│   │   ├── kv_cache.py
 │   │   ├── model_runner.py
 │   │   ├── server.py
 │   │   └── backends/       # Model adapters (gpt today)
@@ -33,8 +34,7 @@ nifre/
 │       └── dashboard/      # FastAPI dashboard UI
 │   └── model/              # Reference GPT implementation
 │       ├── gpt_model.py
-│       ├── attention.py
-│       └── kv_cache.py
+│       └── attention.py
 ├── tests/                  # Smoke tests
 └── requirements.txt
 ```
