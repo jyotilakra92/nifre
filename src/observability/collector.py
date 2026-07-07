@@ -31,12 +31,45 @@ class MetricsCollector:
     def attach(self, engine: "Engine") -> None:
         self._engine = engine
         self.runtime_probe.attach(engine)
+        self._record_enabled_optimizations(engine)
+
+    def _record_enabled_optimizations(self, engine: "Engine") -> None:
+        if getattr(self, "_optimizations_recorded", False):
+            return
+        self._optimizations_recorded = True
+
+        if engine.use_paged_kv_cache:
+            block_size = engine.model.config.block_size
+            self.optimization.record_promotion(
+                "paged-kv-cache",
+                details=f"block_size={block_size}",
+            )
+        else:
+            self.optimization.record_promotion("dense-kv-cache")
+
+        self.optimization.record_promotion(
+            "chunked-prefill",
+            details=f"chunk_size={engine.prefill_chunk_size}",
+        )
+        self.optimization.record_promotion(
+            "token-budget-scheduler",
+            details=f"max_tokens_per_step={engine.max_tokens_per_step}",
+        )
+        self.optimization.record_promotion(
+            "continuous-batching",
+            details=f"max_concurrent={engine.max_concurrent_requests}",
+        )
 
     def on_request_enqueued(self) -> None:
         self.store.record_enqueue()
 
-    def on_prefill_batch(self, requests: list, duration_sec: float) -> None:
-        self.store.record_prefill_step(duration_sec, len(requests))
+    def on_prefill_batch(
+        self,
+        requests: list,
+        duration_sec: float,
+        tokens_processed: int,
+    ) -> None:
+        self.store.record_prefill_step(duration_sec, len(requests), tokens_processed)
         now = time.time()
         for request in requests:
             request.prefill_duration_sec = (request.prefill_duration_sec or 0.0) + duration_sec

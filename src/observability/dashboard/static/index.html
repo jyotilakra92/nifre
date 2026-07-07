@@ -113,6 +113,7 @@
       <div class="chart-wrap"><canvas id="chart-tokens"></canvas></div>
       <div class="chart-wrap"><canvas id="chart-batch"></canvas></div>
     </div>
+    <div class="chart-wrap"><canvas id="chart-prefill-tokens"></canvas></div>
   </section>
 
   <section id="gpu-runtime">
@@ -227,13 +228,24 @@
           card("Output tok / sec", t.output_tokens_per_sec),
           card("Tokens / request", t.tokens_per_request),
           card("Decode iters / sec", t.decode_iterations_per_sec),
+          card("Prefill tok / step", t.avg_prefill_tokens_per_step),
+          card("Total prefill tok", t.total_prefill_tokens),
         ].join("");
 
+        const ec = g.engine_config || {};
+        const blocksLabel = ec.cache_type === "paged"
+          ? `${ec.allocated_blocks ?? 0} / ${ec.num_blocks ?? "—"} blocks`
+          : "dense";
         document.getElementById("runtime-cards").innerHTML = [
           card("GPU util", g.gpu_utilization_pct + "%"),
           card("GPU memory", g.gpu_memory_used_gb + " GB"),
           card("KV cache", g.kv_cache_used_gb + " / " + g.kv_cache_memory_gb + " GB", true),
           card("KV util", g.kv_cache_utilization_pct + "%"),
+          card("Cache type", `<span class="badge">${ec.cache_type || "—"}</span>`, true),
+          card("Block pool", blocksLabel, true),
+          card("Block size", ec.block_size ?? "—", true),
+          card("Prefill chunk", ec.prefill_chunk_size ?? "—", true),
+          card("Token budget", ec.max_tokens_per_step ?? "—", true),
           card("Runtime", `<span class="badge">${g.runtime}</span>`, true),
           card("Model", g.model_name, true),
           card("Precision", g.precision, true),
@@ -263,6 +275,7 @@
         updateMultiChart("chart-queue", [ts.active_requests, ts.queued_requests]);
         updateMultiChart("chart-tokens", [ts.tokens_per_sec, ts.input_tokens_per_sec, ts.output_tokens_per_sec]);
         updateChart("chart-batch", ts.batch_size);
+        updateChart("chart-prefill-tokens", ts.prefill_tokens_per_step);
         updateMultiChart("chart-gpu", [ts.gpu_utilization, ts.gpu_memory_gb]);
         updateChart("chart-kv", ts.kv_cache_utilization);
       } catch (err) {
@@ -289,6 +302,7 @@
       { label: "Output tok/s", data: [], borderColor: "#a371f7", fill: false, tension: 0.3, pointRadius: 0 }
     );
     makeChart("chart-batch", "Batch size", "#d29922");
+    makeChart("chart-prefill-tokens", "Prefill tokens / step", "#f0883e");
     makeChart("chart-gpu", "GPU util %", "#58a6ff");
     charts["chart-gpu"].data.datasets.push({
       label: "GPU mem GB",

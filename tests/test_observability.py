@@ -41,17 +41,30 @@ def test_engine_metrics_smoke():
         max_concurrent_requests=2,
         device=device,
         metrics_collector=obs.collector,
+        prefill_chunk_size=2,
     )
     obs.attach(engine)
 
-    engine.generate([1, 2, 3], max_new_tokens=2)
+    engine.generate([1, 2, 3, 4, 5], max_new_tokens=2)
 
     snapshot = obs.snapshot()
     assert snapshot["request_health"]["completed_requests"] == 1
     assert snapshot["throughput"]["tokens_per_request"] > 0
+    assert snapshot["throughput"]["total_prefill_tokens"] == 5
+    assert snapshot["throughput"]["avg_prefill_tokens_per_step"] > 0
     assert snapshot["gpu_runtime"]["model_name"] == "gpt-test"
+    engine_config = snapshot["gpu_runtime"]["engine_config"]
+    assert engine_config["cache_type"] == "paged"
+    assert engine_config["use_paged_kv_cache"] is True
+    assert engine_config["prefill_chunk_size"] == 2
+    assert engine_config["max_tokens_per_step"] == 2048
+    assert engine_config["block_size"] == wrapped.config.block_size
     assert snapshot["latency"]["ttft"]["p50_ms"] >= 0
     assert snapshot["optimization_history"]["baseline_latency_ms"] is not None
+
+    promoted = [e["name"] for e in snapshot["optimization_history"]["recent_events"] if e["action"] == "promoted"]
+    assert "paged-kv-cache" in promoted
+    assert "chunked-prefill" in promoted
 
 
 def test_optimization_tracker():

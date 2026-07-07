@@ -157,12 +157,21 @@ class Engine:
         if callback is not None:
             callback(token_id)
 
+    def _prefill_tokens_this_step(self, requests: List[InferenceRequest]) -> int:
+        total = 0
+        for request in requests:
+            start = request.prefill_offset
+            end = min(start + request.prefill_chunk_size, request.num_prompt_tokens)
+            total += end - start
+        return total
+
     def _run_prefill(self, requests: List[InferenceRequest]) -> None:
         start = time.perf_counter()
+        tokens_processed = self._prefill_tokens_this_step(requests)
         token_ids = self.model_runner.prefill(self.cache, requests)
         duration = time.perf_counter() - start
         if self.metrics:
-            self.metrics.on_prefill_batch(requests, duration)
+            self.metrics.on_prefill_batch(requests, duration, tokens_processed)
 
         for request, token_id in zip(requests, token_ids):
             if token_id is None:

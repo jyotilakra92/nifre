@@ -61,11 +61,13 @@ class MetricsStore:
         self.total_input_tokens = 0
         self.total_output_tokens = 0
         self.total_decode_iterations = 0
+        self.total_prefill_tokens = 0
 
         self._completion_timestamps: Deque[float] = deque(maxlen=5000)
         self._ttft_samples: Deque[float] = deque(maxlen=2000)
         self._total_latency_samples: Deque[float] = deque(maxlen=2000)
         self._prefill_step_samples: Deque[float] = deque(maxlen=2000)
+        self._prefill_tokens_per_step_samples: Deque[int] = deque(maxlen=2000)
         self._decode_step_samples: Deque[float] = deque(maxlen=2000)
         self._inter_token_samples: Deque[float] = deque(maxlen=5000)
 
@@ -76,6 +78,7 @@ class MetricsStore:
         self.ts_input_tokens_per_sec = TimeSeries()
         self.ts_output_tokens_per_sec = TimeSeries()
         self.ts_batch_size = TimeSeries()
+        self.ts_prefill_tokens_per_step = TimeSeries()
         self.ts_decode_iterations_per_sec = TimeSeries()
         self.ts_gpu_utilization = TimeSeries()
         self.ts_gpu_memory_gb = TimeSeries()
@@ -115,10 +118,18 @@ class MetricsStore:
             self.total_output_tokens += output_tokens
             self._token_events.append((now, input_tokens, output_tokens))
 
-    def record_prefill_step(self, duration_sec: float, batch_size: int) -> None:
+    def record_prefill_step(
+        self,
+        duration_sec: float,
+        batch_size: int,
+        tokens_processed: int,
+    ) -> None:
         with self._lock:
             self._prefill_step_samples.append(duration_sec)
+            self._prefill_tokens_per_step_samples.append(tokens_processed)
+            self.total_prefill_tokens += tokens_processed
             self.ts_batch_size.add(float(batch_size))
+            self.ts_prefill_tokens_per_step.add(float(tokens_processed))
 
     def record_decode_step(self, duration_sec: float, batch_size: int) -> None:
         now = time.time()
@@ -195,8 +206,13 @@ class MetricsStore:
             ttft_list = list(self._ttft_samples)
             total_lat_list = list(self._total_latency_samples)
             prefill_list = list(self._prefill_step_samples)
+            prefill_tokens_list = list(self._prefill_tokens_per_step_samples)
             decode_list = list(self._decode_step_samples)
             inter_list = list(self._inter_token_samples)
+
+            avg_prefill_tokens_per_step = (
+                sum(prefill_tokens_list) / len(prefill_tokens_list) if prefill_tokens_list else 0.0
+            )
 
         return {
             "timestamp": time.time(),
@@ -221,6 +237,8 @@ class MetricsStore:
                 "output_tokens_per_sec": round(output_tps, 2),
                 "tokens_per_request": round(avg_tokens_per_request, 2),
                 "decode_iterations_per_sec": round(decode_iters_per_sec, 2),
+                "total_prefill_tokens": self.total_prefill_tokens,
+                "avg_prefill_tokens_per_step": round(avg_prefill_tokens_per_step, 2),
             },
             "gpu_runtime": runtime_info,
             "optimization_history": optimization_info,
@@ -232,6 +250,7 @@ class MetricsStore:
                 "input_tokens_per_sec": self.ts_input_tokens_per_sec.as_list(),
                 "output_tokens_per_sec": self.ts_output_tokens_per_sec.as_list(),
                 "batch_size": self.ts_batch_size.as_list(),
+                "prefill_tokens_per_step": self.ts_prefill_tokens_per_step.as_list(),
                 "decode_iterations_per_sec": self.ts_decode_iterations_per_sec.as_list(),
                 "gpu_utilization": self.ts_gpu_utilization.as_list(),
                 "gpu_memory_gb": self.ts_gpu_memory_gb.as_list(),

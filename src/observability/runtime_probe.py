@@ -108,6 +108,46 @@ class RuntimeProbe:
             "gpu_memory_gb": round(memory_gb, 3),
         }
 
+    def _engine_config(self) -> Dict[str, object]:
+        engine = self._engine
+        if engine is None:
+            return {}
+
+        cache = engine.cache
+        use_paged = engine.use_paged_kv_cache
+        config: Dict[str, object] = {
+            "use_paged_kv_cache": use_paged,
+            "prefill_chunk_size": engine.prefill_chunk_size,
+            "max_tokens_per_step": engine.max_tokens_per_step,
+            "max_concurrent_requests": engine.max_concurrent_requests,
+            "cache_type": "paged" if use_paged else "dense",
+        }
+
+        if cache is not None and _is_paged_cache(cache):
+            config.update(
+                {
+                    "block_size": cache.block_size,
+                    "num_blocks": cache.num_blocks,
+                    "allocated_blocks": cache.allocated_blocks,
+                }
+            )
+        elif cache is not None:
+            config.update(
+                {
+                    "block_size": None,
+                    "num_blocks": None,
+                    "allocated_blocks": None,
+                    "max_seq_len": cache.max_seq_len,
+                    "batch_size": cache.batch_size,
+                }
+            )
+        else:
+            config["block_size"] = engine.model.config.block_size if use_paged else None
+            config["num_blocks"] = None
+            config["allocated_blocks"] = 0
+
+        return config
+
     def snapshot(self) -> Dict[str, object]:
         engine = self._engine
         cache = engine.cache if engine else None
@@ -132,6 +172,7 @@ class RuntimeProbe:
             "model_name": self.model_name,
             "precision": precision or "fp16",
             "device": str(engine.device) if engine else "cpu",
+            "engine_config": self._engine_config(),
         }
 
     def sample_to_store(self, store) -> None:
