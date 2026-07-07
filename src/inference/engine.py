@@ -2,7 +2,8 @@
 
 import time
 import uuid
-from typing import TYPE_CHECKING, List, Optional
+from queue import Empty, Queue
+from typing import TYPE_CHECKING, Callable, Iterator, List, Optional
 
 import torch
 
@@ -14,6 +15,8 @@ from inference.scheduler import Scheduler
 
 if TYPE_CHECKING:
     from observability.collector import MetricsCollector
+
+TokenCallback = Callable[[int], None]
 
 
 class Engine:
@@ -37,6 +40,7 @@ class Engine:
         self.metrics = metrics_collector
         self.prefill_chunk_size = prefill_chunk_size
         self.max_tokens_per_step = max_tokens_per_step
+        self._token_callbacks: dict[str, TokenCallback] = {}
 
     def add_request(self, prompt_token_ids: List[int], max_new_tokens: int) -> str:
         request_id = uuid.uuid4().hex[:8]
@@ -50,6 +54,30 @@ class Engine:
         if self.metrics:
             self.metrics.on_request_enqueued()
         return request_id
+
+    def stream_request(
+        self,
+        prompt_token_ids: List[int],
+        max_new_tokens: int,
+    ) -> Iterator[int]:
+        """Yield generated token ids as they are produced."""
+        request_id = self.add_request(prompt_token_ids, max_new_tokens)
+        queue: Queue[int] = Queue()
+        self.register_token_callback(request_id, queue.put)
+
+        try:
+            while (
+                request_id not in self.scheduler.completed
+                and request_id not in self.scheduler.failed
+            ):
+                self.step()
+                while True:
+                    try:
+                        yield queue.get_nowait()
+                    except Empty:
+                        break
+        finally:
+            self.unregister_token_callback(request_id)
 
     def get_completed(self) -> dict:
         return self.scheduler.completed
@@ -83,21 +111,31 @@ class Engine:
         request_id = self.add_request(prompt_token_ids, max_new_tokens)
         deadline = time.time() + timeout_seconds if timeout_seconds else None
 
-        while (
-            request_id not in self.scheduler.completed
-            and request_id not in self.scheduler.failed
-        ):
-            if deadline and time.time() > deadline:
-                request = self._cancel_request(request_id, status="timeout")
-                if self.metrics and request is not None:
-                    self.metrics.on_request_failed(request, "timeout")
-                return self.scheduler.failed[request_id]
+        try:
+            while (
+                request_id not in self.scheduler.completed
+                and request_id not in self.scheduler.failed
+            ):
+                if deadline and time.time() > deadline:
+                    request = self._cancel_request(request_id, status="timeout")
+                    if self.metrics and request is not None:
+                        self.metrics.on_request_failed(request, "timeout")
+                    return self.scheduler.failed[request_id]
 
-            self.step()
+                self.step()
+        finally:
+            self.unregister_token_callback(request_id)
 
         if request_id in self.scheduler.completed:
             return self.scheduler.completed[request_id]
         return self.scheduler.failed[request_id]
+
+    def register_token_callback(self, request_id: str, callback: TokenCallback) -> None:
+        """Register a per-request hook invoked after each generated token."""
+        self._token_callbacks[request_id] = callback
+
+    def unregister_token_callback(self, request_id: str) -> None:
+        self._token_callbacks.pop(request_id, None)
 
     def _cancel_request(self, request_id: str, status: str) -> Optional[InferenceRequest]:
         request = self.scheduler.cancel_request(request_id, status=status)
@@ -108,6 +146,11 @@ class Engine:
             dtype = getattr(self.model, "dtype", torch.float16)
             self.cache = make_kv_cache(self.model.config, self.device, dtype=dtype)
             self.cache.init_batch(self.max_concurrent_requests)
+
+    def _emit_token(self, request_id: str, token_id: int) -> None:
+        callback = self._token_callbacks.get(request_id)
+        if callback is not None:
+            callback(token_id)
 
     def _run_prefill(self, requests: List[InferenceRequest]) -> None:
         start = time.perf_counter()
@@ -121,6 +164,7 @@ class Engine:
                 continue
             self.scheduler.mark_prefill_done(request)
             self.scheduler.mark_decode_done(request, token_id)
+            self._emit_token(request.request_id, token_id)
             if self.metrics:
                 if request.state == RequestState.FINISHED:
                     self.metrics.on_request_finished(request)
@@ -134,6 +178,7 @@ class Engine:
 
         for request, token_id in zip(requests, token_ids):
             self.scheduler.mark_decode_done(request, token_id)
+            self._emit_token(request.request_id, token_id)
             if self.metrics:
                 self.metrics.on_decode_token(request)
                 if request.state == RequestState.FINISHED:

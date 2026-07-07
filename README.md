@@ -9,7 +9,7 @@ A small, educational LLM inference engine with KV-cache, static batching, contin
 - **Continuous batching** — requests join and leave between decode steps
 - **Chunked prefill** — long prompts are cached in fixed-size chunks so decode can interleave
 - **Model-agnostic API** — plug in backends via `InferenceModel` + `Tokenizer`
-- **FastAPI server** — HTTP completions endpoint with OpenAPI docs
+- **FastAPI server** — HTTP completions with blocking JSON or SSE streaming (`stream: true`)
 - **Observability dashboard** — request health, latency, throughput, GPU/runtime, optimization history
 
 ## Project layout
@@ -106,7 +106,9 @@ Interactive API docs: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
 curl -s http://127.0.0.1:8000/health | python3 -m json.tool
 ```
 
-**Completions**
+**Completions (non-streaming, default)**
+
+Omit `stream` or set `"stream": false` to receive one JSON response when generation finishes.
 
 ```bash
 curl -s -X POST http://127.0.0.1:8000/v1/completions \
@@ -125,6 +127,31 @@ Example response:
   "output_token_ids": [20625, 10325, ...],
   "model": "gpt"
 }
+```
+
+**Completions (streaming SSE)**
+
+Set `"stream": true` to receive tokens as Server-Sent Events:
+
+```bash
+curl -N -X POST http://127.0.0.1:8000/v1/completions \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "Every effort moves you", "max_new_tokens": 20, "stream": true}'
+```
+
+Example events:
+
+```text
+data: {"token_id": 1234, "text": " hello"}
+data: {"token_id": 5678, "text": " world"}
+data: [DONE]
+```
+
+Engine-only streaming demo (no HTTP):
+
+```bash
+PYTHONPATH=src:src/model python3 -m inference.stream_demo \
+  --prompt "hello world" --max-new-tokens 5
 ```
 
 ### Server options
@@ -319,8 +346,7 @@ See `src/inference/model_interface.py` and `src/inference/backends/gpt.py` for t
 ## What is not included yet
 
 - PagedAttention
-- Token streaming (SSE)
-- OpenAI-compatible API shape
+- OpenAI-compatible streaming response shape
 - Production auth, rate limits, or multi-GPU serving
 
 These are natural next steps after the core engine is solid.

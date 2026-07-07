@@ -1,13 +1,15 @@
 """FastAPI server exposing the continuous-batching inference engine."""
 
 import argparse
+import json
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import List, Optional
+from typing import Iterator, List, Optional
 
 import uvicorn
 from fastapi import FastAPI, Request
 from pydantic import BaseModel, Field
+from starlette.responses import StreamingResponse
 
 from inference.backends.registry import list_backends, load_backend
 from inference.engine import Engine
@@ -23,6 +25,7 @@ DEFAULT_CHECKPOINT = (
 class CompletionRequest(BaseModel):
     prompt: str = Field(..., min_length=1)
     max_new_tokens: int = Field(default=20, ge=1)
+    stream: bool = Field(default=False)
 
 
 class CompletionResponse(BaseModel):
@@ -31,6 +34,38 @@ class CompletionResponse(BaseModel):
     text: str
     output_token_ids: List[int]
     model: str
+
+
+def stream_completion_events(
+    engine: Engine,
+    tokenizer,
+    prompt_token_ids: List[int],
+    max_new_tokens: int,
+) -> Iterator[str]:
+    for token_id in engine.stream_request(prompt_token_ids, max_new_tokens):
+        text = tokenizer.decode([token_id])
+        payload = json.dumps({"token_id": token_id, "text": text})
+        yield f"data: {payload}\n\n"
+    yield "data: [DONE]\n\n"
+
+
+def _completions_blocking(
+    engine: Engine,
+    tokenizer,
+    prompt_token_ids: List[int],
+    prompt: str,
+    max_new_tokens: int,
+    model_backend: str,
+) -> CompletionResponse:
+    result = engine.generate(prompt_token_ids, max_new_tokens=max_new_tokens)
+    text = tokenizer.decode(result.prompt_token_ids + result.output_token_ids)
+    return CompletionResponse(
+        request_id=result.request_id,
+        prompt=prompt,
+        text=text,
+        output_token_ids=result.output_token_ids,
+        model=model_backend,
+    )
 
 
 def create_engine(
@@ -122,21 +157,31 @@ def create_app(
             payload["observability"] = "/observability"
         return payload
 
-    @app.post("/v1/completions", response_model=CompletionResponse)
+    @app.post("/v1/completions")
     def completions(body: CompletionRequest, request: Request):
+        """Return full JSON (default) or SSE token stream when ``stream=true``."""
         engine = request.app.state.engine
         tokenizer = request.app.state.tokenizer
-
         token_ids = tokenizer.encode(body.prompt)
-        result = engine.generate(token_ids, max_new_tokens=body.max_new_tokens)
-        text = tokenizer.decode(result.prompt_token_ids + result.output_token_ids)
 
-        return CompletionResponse(
-            request_id=result.request_id,
-            prompt=body.prompt,
-            text=text,
-            output_token_ids=result.output_token_ids,
-            model=request.app.state.model_backend,
+        if body.stream:
+            return StreamingResponse(
+                stream_completion_events(
+                    engine,
+                    tokenizer,
+                    token_ids,
+                    body.max_new_tokens,
+                ),
+                media_type="text/event-stream",
+            )
+
+        return _completions_blocking(
+            engine,
+            tokenizer,
+            token_ids,
+            body.prompt,
+            body.max_new_tokens,
+            request.app.state.model_backend,
         )
 
     if enable_observability:
@@ -166,7 +211,8 @@ def main():
     print(f"Serving on http://{args.host}:{args.port}")
     print(f"Model backend: {args.model}")
     print("Docs:  http://{host}:{port}/docs".format(host=args.host, port=args.port))
-    print('POST /v1/completions  {"prompt": "...", "max_new_tokens": 20}')
+    print('POST /v1/completions  {"prompt": "...", "max_new_tokens": 20}  # blocking JSON')
+    print('POST /v1/completions  {"prompt": "...", "max_new_tokens": 20, "stream": true}  # SSE')
     print("GET  /health")
     print("GET  /observability  (metrics dashboard)")
     uvicorn.run(server_app, host=args.host, port=args.port)

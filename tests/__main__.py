@@ -9,7 +9,13 @@ for path in (SRC, MODEL):
         sys.path.insert(0, str(path))
 
 from tests.test_attention import test_attention_cache_smoke
-from tests.test_engine import test_engine_smoke
+from tests.test_engine import (
+    test_engine_smoke,
+    test_stream_request_matches_generate,
+    test_stream_request_unregisters_callback,
+    test_stream_request_with_chunked_prefill,
+    test_token_callback_emits_all_generated_tokens,
+)
 from tests.test_generate import test_model_runner_via_engine, test_static_batch_matches_single
 from tests.test_kv_cache import test_kv_cache_smoke
 from tests.test_backends import test_load_gpt_backend
@@ -30,7 +36,13 @@ from tests.test_observability import (
     test_optimization_tracker,
     test_percentile,
 )
-from tests.test_server import test_completions_smoke, test_completions_validation, test_health
+from tests.test_server import (
+    test_completions_non_streaming_explicit,
+    test_completions_smoke,
+    test_completions_stream_sse,
+    test_completions_validation,
+    test_health,
+)
 
 
 class SmokeTests(unittest.TestCase):
@@ -55,6 +67,18 @@ class SmokeTests(unittest.TestCase):
     def test_engine(self):
         test_engine_smoke()
 
+    def test_engine_token_callback(self):
+        test_token_callback_emits_all_generated_tokens()
+
+    def test_engine_stream_matches_generate(self):
+        test_stream_request_matches_generate()
+
+    def test_engine_stream_chunked_prefill(self):
+        test_stream_request_with_chunked_prefill()
+
+    def test_engine_stream_cleanup(self):
+        test_stream_request_unregisters_callback()
+
     def test_static_batch(self):
         test_static_batch_matches_single()
 
@@ -72,6 +96,12 @@ class SmokeTests(unittest.TestCase):
 
     def test_server_completions(self):
         test_completions_smoke()
+
+    def test_server_non_streaming(self):
+        test_completions_non_streaming_explicit()
+
+    def test_server_stream(self):
+        test_completions_stream_sse()
 
     def test_model_runner_chunked(self):
         test_chunked_prefill_matches_single_step()

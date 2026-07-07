@@ -54,6 +54,21 @@ def test_completions_validation():
         assert response.status_code == 422
 
 
+def test_completions_non_streaming_explicit():
+    with _test_client() as client:
+        for payload in (
+            {"prompt": "hello", "max_new_tokens": 2},
+            {"prompt": "hello", "max_new_tokens": 2, "stream": False},
+        ):
+            response = client.post("/v1/completions", json=payload)
+            assert response.status_code == 200
+            assert response.headers["content-type"].startswith("application/json")
+            body = response.json()
+            assert body["prompt"] == "hello"
+            assert len(body["output_token_ids"]) == 2
+            assert "request_id" in body
+
+
 def test_completions_smoke():
     with _test_client() as client:
         response = client.post(
@@ -66,3 +81,37 @@ def test_completions_smoke():
         assert payload["model"] == "gpt"
         assert len(payload["output_token_ids"]) == 2
         assert payload["text"]
+
+
+def test_completions_stream_sse():
+    import json
+
+    with _test_client() as client:
+        with client.stream(
+            "POST",
+            "/v1/completions",
+            json={"prompt": "hello", "max_new_tokens": 3, "stream": True},
+        ) as response:
+            assert response.status_code == 200
+            assert response.headers["content-type"].startswith("text/event-stream")
+
+            events = []
+            done = False
+            for line in response.iter_lines():
+                if not line or not line.startswith("data: "):
+                    continue
+                data = line.removeprefix("data: ")
+                if data == "[DONE]":
+                    done = True
+                    break
+                events.append(json.loads(data))
+
+        assert done
+        assert len(events) == 3
+        assert all("token_id" in event and "text" in event for event in events)
+
+        blocking = client.post(
+            "/v1/completions",
+            json={"prompt": "hello", "max_new_tokens": 3, "stream": False},
+        ).json()
+        assert [event["token_id"] for event in events] == blocking["output_token_ids"]
