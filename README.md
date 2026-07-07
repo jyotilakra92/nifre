@@ -149,16 +149,6 @@ data: {"token_id": 5678, "text": " world"}
 data: [DONE]
 ```
 
-<<<<<<< HEAD
-Engine-only streaming demo (no HTTP):
-
-```bash
-PYTHONPATH=src:src/model python3 -m inference.stream_demo \
-  --prompt "hello world" --max-new-tokens 5
-```
-
-=======
->>>>>>> f172705 (Add support for token streaming)
 ### Server options
 
 | Flag | Default | Description |
