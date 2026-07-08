@@ -248,6 +248,13 @@ class MetricsStore:
                 "avg_prefill_tokens_per_step": round(avg_prefill_tokens_per_step, 2),
                 "prefix_cache_hits": self.prefix_cache_hits,
                 "prefix_cache_tokens_saved": self.prefix_cache_tokens_saved,
+                "prefix_cache_reuse_ratio": round(
+                    self.prefix_cache_tokens_saved
+                    / (self.prefix_cache_tokens_saved + self.total_prefill_tokens),
+                    4,
+                )
+                if (self.prefix_cache_tokens_saved + self.total_prefill_tokens) > 0
+                else 0.0,
             },
             "gpu_runtime": runtime_info,
             "optimization_history": optimization_info,

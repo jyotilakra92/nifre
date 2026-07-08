@@ -209,7 +209,9 @@ class Engine:
         if self.cache is None:
             make_cache = getattr(self.model, "make_kv_cache", None)
             if make_cache is not None:
-                self.cache = make_cache(self.device)
+                self.cache = make_cache(
+                    self.device, enable_prefix_cache=self.use_prefix_cache
+                )
                 self.cache.init_batch(self.max_concurrent_requests)
                 return
 

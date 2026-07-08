@@ -3,10 +3,8 @@ import unittest
 from pathlib import Path
 
 SRC = Path(__file__).resolve().parent.parent / "src"
-MODEL = SRC / "model"
-for path in (SRC, MODEL):
-    if str(path) not in sys.path:
-        sys.path.insert(0, str(path))
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
 
 from tests.test_admin_tuning import (
     test_admin_tuning_enable_and_update_goal,
@@ -131,8 +129,13 @@ from tests.test_engine import (
 )
 from tests.test_generate import test_model_runner_via_engine, test_static_batch_matches_single
 from tests.test_kv_cache import test_kv_cache_smoke
-from tests.test_backends import test_load_gpt_backend, test_load_hf_gpt_backend
-from tests.test_hf_backend import test_hf_gpt_engine_generate
+from tests.test_backends import test_load_gpt_backend, test_load_hf_backend
+from tests.test_hf_backend import (
+    test_hf_auto_engine_generate,
+    test_hf_concurrent_prefills_of_different_lengths,
+    test_hf_prefix_cache_metrics_and_block_dedup,
+    test_hf_prefix_cache_reuses_shared_prefix_without_changing_output,
+)
 from tests.test_scheduler import (
     test_mark_prefill_done_rejects_incomplete_prefill,
     test_scheduler_smoke,
@@ -326,10 +329,19 @@ class SmokeTests(unittest.TestCase):
 
     def test_backends(self):
         test_load_gpt_backend()
-        test_load_hf_gpt_backend()
+        test_load_hf_backend()
 
     def test_hf_backend_engine(self):
-        test_hf_gpt_engine_generate()
+        test_hf_auto_engine_generate()
+
+    def test_hf_prefix_cache(self):
+        test_hf_prefix_cache_reuses_shared_prefix_without_changing_output()
+
+    def test_hf_concurrent_prefills(self):
+        test_hf_concurrent_prefills_of_different_lengths()
+
+    def test_hf_prefix_cache_metrics(self):
+        test_hf_prefix_cache_metrics_and_block_dedup()
 
     def test_openai_api(self):
         test_completion_chunk_sse_shape()

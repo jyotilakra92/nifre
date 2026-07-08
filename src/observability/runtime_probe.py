@@ -32,7 +32,9 @@ def _is_paged_cache(cache) -> bool:
 
 
 def kv_cache_bytes(cache) -> int:
-    if cache is None or cache.k is None:
+    # HF's dense cache (HFKVCache) exposes no contiguous K/V tensor to size, so
+    # nifre cannot account its memory here.
+    if cache is None or getattr(cache, "k", None) is None:
         return 0
     elem_size = torch.tensor([], dtype=cache.dtype).element_size()
     if _is_paged_cache(cache):
@@ -47,7 +49,9 @@ def kv_cache_bytes(cache) -> int:
 
 
 def kv_cache_used_bytes(cache) -> int:
-    if cache is None or cache.pos is None:
+    if cache is None or getattr(cache, "pos", None) is None:
+        return 0
+    if not hasattr(cache, "n_heads"):  # e.g. HFKVCache
         return 0
     elem_size = torch.tensor([], dtype=cache.dtype).element_size()
     tokens_used = int(cache.pos.sum().item())
@@ -139,13 +143,17 @@ class RuntimeProbe:
                 }
             )
         elif cache is not None:
+            prefix_info = (
+                cache.prefix_stats() if hasattr(cache, "prefix_stats") else None
+            )
             config.update(
                 {
-                    "block_size": None,
+                    "block_size": getattr(cache, "block_size", None),
                     "num_blocks": None,
                     "allocated_blocks": None,
                     "max_seq_len": cache.max_seq_len,
                     "batch_size": cache.batch_size,
+                    "prefix_cache": prefix_info,
                 }
             )
         else:

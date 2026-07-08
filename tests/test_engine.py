@@ -4,14 +4,12 @@ from pathlib import Path
 import torch
 
 SRC = Path(__file__).resolve().parent.parent / "src"
-MODEL = SRC / "model"
-for path in (SRC, MODEL):
-    if str(path) not in sys.path:
-        sys.path.insert(0, str(path))
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
 
 from inference.backends.gpt import GptInferenceModel
 from inference.engine import Engine
-from model.gpt_model import GPT_CONFIG_124M, GptModel
+from inference.models.gpt import GPT_CONFIG_124M, GptModel
 
 
 def _tiny_gpt_model(device):

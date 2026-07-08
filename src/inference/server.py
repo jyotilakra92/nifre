@@ -10,7 +10,7 @@ from fastapi import FastAPI, Request
 from pydantic import BaseModel, Field
 from starlette.responses import JSONResponse, StreamingResponse
 
-from inference.backends.registry import list_backends, load_backend
+from inference.backends.registry import is_hf_backend, list_backends, load_backend
 from inference.engine import Engine
 from inference.engine_worker import EngineWorker
 from inference.openai_api import (
@@ -24,7 +24,7 @@ from observability.dashboard.server import register_observability_routes
 from autotune.admin import register_tuning_routes
 
 DEFAULT_CHECKPOINT = (
-    Path(__file__).resolve().parent.parent / "model" / "checkpoints" / "gpt_model_checkpoint.pt"
+    Path(__file__).resolve().parent.parent / "checkpoints" / "gpt_model_checkpoint.pt"
 )
 
 
@@ -63,30 +63,30 @@ def create_engine(
     *,
     hf_model: str = "gpt2",
     context_length: int = 256,
+    use_paged_kv_cache: bool = True,
+    use_prefix_cache: bool = True,
 ) -> Engine:
     device = get_device()
-    loader_kwargs = {}
-    if model_backend == "hf-gpt":
-        loader_kwargs = {"hf_model": hf_model, "context_length": context_length}
+    if is_hf_backend(model_backend):
+        print(f"Loading Hugging Face model: {hf_model} (context_length={context_length})")
+        model, _tokenizer = load_backend(
+            model_backend, None, device, hf_model=hf_model, context_length=context_length
+        )
     else:
         checkpoint_path = checkpoint if checkpoint.exists() else None
         if checkpoint_path is None:
             print(f"No checkpoint at {checkpoint} — using random weights")
         else:
             print(f"Loading checkpoint: {checkpoint}")
-
-    if model_backend == "hf-gpt":
-        print(f"Loading Hugging Face model: {hf_model} (context_length={context_length})")
-        model, _tokenizer = load_backend(model_backend, None, device, **loader_kwargs)
-    else:
-        checkpoint_path = checkpoint if checkpoint.exists() else None
-        model, _tokenizer = load_backend(model_backend, checkpoint_path, device, **loader_kwargs)
+        model, _tokenizer = load_backend(model_backend, checkpoint_path, device)
     metrics = observability.collector if observability else None
     engine = Engine(
         model,
         max_concurrent_requests=max_concurrent,
         device=device,
         metrics_collector=metrics,
+        use_paged_kv_cache=use_paged_kv_cache,
+        use_prefix_cache=use_prefix_cache,
     )
     if observability:
         observability.attach(engine)
@@ -94,7 +94,7 @@ def create_engine(
 
 
 def create_app(
-    model_backend: str = "hf-gpt",
+    model_backend: str = "hf",
     checkpoint: Path = DEFAULT_CHECKPOINT,
     max_concurrent: int = 2,
     engine: Optional[Engine] = None,
@@ -108,6 +108,8 @@ def create_app(
     tuning_evaluation_sec: float = 60.0,
     hf_model: str = "gpt2",
     context_length: int = 256,
+    use_paged_kv_cache: bool = True,
+    use_prefix_cache: bool = True,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -128,16 +130,15 @@ def create_app(
                 app.state.observability = observability
         else:
             device = get_device()
-            runtime = "huggingface" if model_backend == "hf-gpt" else "custom"
+            # nifre is always the serving runtime ("custom"); HF only supplies weights.
+            model_label = hf_model if is_hf_backend(model_backend) else model_backend
             obs = None
             if enable_observability:
-                obs = observability or Observability(model_name=model_backend, runtime=runtime)
-            loader_kwargs = {}
-            if model_backend == "hf-gpt":
-                loader_kwargs = {"hf_model": hf_model, "context_length": context_length}
+                obs = observability or Observability(model_name=model_label, runtime="custom")
+            if is_hf_backend(model_backend):
                 print(f"Loading Hugging Face model: {hf_model} (context_length={context_length})")
                 model, app.state.tokenizer = load_backend(
-                    model_backend, None, device, **loader_kwargs
+                    model_backend, None, device, hf_model=hf_model, context_length=context_length
                 )
             else:
                 checkpoint_path = checkpoint if checkpoint.exists() else None
@@ -146,13 +147,15 @@ def create_app(
                 else:
                     print(f"Loading checkpoint: {checkpoint}")
                 model, app.state.tokenizer = load_backend(
-                    model_backend, checkpoint_path, device, **loader_kwargs
+                    model_backend, checkpoint_path, device
                 )
             app.state.engine = Engine(
                 model,
                 max_concurrent_requests=max_concurrent,
                 device=device,
                 metrics_collector=obs.collector if obs else None,
+                use_paged_kv_cache=use_paged_kv_cache,
+                use_prefix_cache=use_prefix_cache,
             )
             if obs:
                 obs.attach(app.state.engine)
@@ -250,9 +253,9 @@ def main():
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument(
         "--model",
-        default="hf-gpt",
+        default="hf",
         choices=list_backends(),
-        help="Registered model backend to load (default: hf-gpt = Hugging Face GPT-2)",
+        help="Registered model backend to load (default: hf = any Hugging Face causal LM)",
     )
     parser.add_argument(
         "--checkpoint",
@@ -263,7 +266,7 @@ def main():
     parser.add_argument(
         "--hf-model",
         default="gpt2",
-        help="Hugging Face model id when using --model hf-gpt",
+        help="Hugging Face model id for --model hf (e.g. gpt2, Qwen/Qwen2.5-0.5B-Instruct)",
     )
     parser.add_argument(
         "--context-length",
@@ -272,6 +275,16 @@ def main():
         help="Max context length (truncates HF position embeddings)",
     )
     parser.add_argument("--max-concurrent", type=int, default=2)
+    parser.add_argument(
+        "--no-prefix-cache",
+        action="store_true",
+        help="Disable prefix caching (reuse of shared prompt prefixes)",
+    )
+    parser.add_argument(
+        "--no-paged-kv-cache",
+        action="store_true",
+        help="Disable the block-paged KV cache (custom gpt backend only; HF always uses its own cache)",
+    )
     parser.add_argument(
         "--auto-tune",
         action="store_true",
@@ -307,10 +320,16 @@ def main():
         tuning_evaluation_sec=args.tuning_evaluation,
         hf_model=args.hf_model,
         context_length=args.context_length,
+        use_paged_kv_cache=not args.no_paged_kv_cache,
+        use_prefix_cache=not args.no_prefix_cache,
     )
     print(f"Serving on http://{args.host}:{args.port}")
     print(f"Model backend: {args.model}")
-    if args.model == "hf-gpt":
+    print(
+        f"Prefix cache: {'off' if args.no_prefix_cache else 'on'}  "
+        f"Paged KV cache: {'off' if args.no_paged_kv_cache else 'on'}"
+    )
+    if is_hf_backend(args.model):
         print(f"HF model: {args.hf_model}  context_length={args.context_length}")
     print("Docs:  http://{host}:{port}/docs".format(host=args.host, port=args.port))
     print('POST /v1/completions  {"prompt": "...", "max_new_tokens": 20}  # blocking JSON')

@@ -6,7 +6,7 @@ import torch
 
 from inference.data_model import ModelConfig
 from inference.model_interface import InferenceModel, Tokenizer
-from model.gpt_model import GPT_CONFIG_124M, GptModel
+from inference.models.gpt import GPT_CONFIG_124M, GptModel
 
 GPT2_PAD_TOKEN_ID = 50256
 

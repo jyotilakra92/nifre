@@ -5,16 +5,14 @@ import pytest
 import torch
 
 SRC = Path(__file__).resolve().parent.parent / "src"
-MODEL = SRC / "model"
-for path in (SRC, MODEL):
-    if str(path) not in sys.path:
-        sys.path.insert(0, str(path))
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
 
 from inference.backends.gpt import GptInferenceModel
 from inference.block_allocator import BlockAllocator
 from inference.engine import Engine
 from inference.prefix_cache import PrefixCache
-from model.gpt_model import GPT_CONFIG_124M, GptModel
+from inference.models.gpt import GPT_CONFIG_124M, GptModel
 
 
 def test_prefix_cache_lookup_and_insert():

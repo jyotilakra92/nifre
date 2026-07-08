@@ -4,15 +4,22 @@ from typing import Callable, Dict, Optional, Tuple
 import torch
 
 from inference.backends.gpt import load_gpt_backend
-from inference.backends.hf_gpt import load_hf_gpt_backend
+from inference.backends.hf_auto import load_hf_backend
 from inference.model_interface import InferenceModel, Tokenizer
 
 BackendLoader = Callable[..., Tuple[InferenceModel, Tokenizer]]
 
 BACKENDS: Dict[str, BackendLoader] = {
     "gpt": load_gpt_backend,
-    "hf-gpt": load_hf_gpt_backend,
+    "hf": load_hf_backend,
 }
+
+# Backends whose weights come from the Hugging Face Hub (need --hf-model, not --checkpoint).
+HF_BACKENDS = {"hf"}
+
+
+def is_hf_backend(name: str) -> bool:
+    return name in HF_BACKENDS
 
 
 def list_backends():

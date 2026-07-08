@@ -4,7 +4,7 @@ from pathlib import Path
 import tiktoken
 import torch
 
-from model.gpt_model import GptModel, GPT_CONFIG_124M
+from inference.models.gpt import GptModel, GPT_CONFIG_124M
 from inference.kv_cache import KVCache
 from sampler import sample_greedy
 
@@ -107,7 +107,7 @@ def main():
     parser.add_argument(
         "--checkpoint",
         type=Path,
-        default=Path(__file__).parent / "model" / "checkpoints" / "gpt_model_checkpoint.pt",
+        default=Path(__file__).parent / "checkpoints" / "gpt_model_checkpoint.pt",
         help="Path to a checkpoint saved as {config, model_state_dict}",
     )
     parser.add_argument(

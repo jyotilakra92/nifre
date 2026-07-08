@@ -7,7 +7,7 @@ from pathlib import Path
 
 import torch
 
-from model.gpt_model import GptModel
+from inference.models.gpt import GptModel
 
 
 def hf_config_for_nifre(*, context_length: int = 256) -> dict:
@@ -115,7 +115,7 @@ def main() -> None:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("src/model/checkpoints/gpt2_hf_checkpoint.pt"),
+        default=Path("src/checkpoints/gpt2_hf_checkpoint.pt"),
         help="Output checkpoint path",
     )
     args = parser.parse_args()

@@ -1,6 +1,6 @@
 import torch
 
-from model.attention import MultiHeadAttention
+from inference.models.gpt import GptAttention
 from inference.kv_cache import KVCache
 from inference.paged_kv_cache import PagedKVCache
 
@@ -12,12 +12,11 @@ def _run_attention_cache_smoke(cache):
     head_dim = 4
     num_layers = 2
 
-    attn = MultiHeadAttention(
+    attn = GptAttention(
         d_in=d_in,
         d_out=d_out,
-        context_length=16,
-        dropout=0.0,
         num_heads=num_heads,
+        dropout=0.0,
     )
     attn.eval()
 

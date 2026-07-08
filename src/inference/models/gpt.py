@@ -1,8 +1,14 @@
+"""GPT-2 style causal language model.
+
+The attention module here only owns the q/k/v/out projections; the cache and
+softmax machinery live in the model-agnostic :class:`inference.attention.Attention`.
+"""
+
 import torch
 import torch.nn as nn
 
-from layer_norm import LayerNorm
-from transformer_block import TransformerBlock
+from inference.attention import Attention
+from inference.models.layers import FeedForward, LayerNorm
 
 GPT_CONFIG_124M = {
     "vocab_size": 50257,
@@ -13,6 +19,72 @@ GPT_CONFIG_124M = {
     "drop_rate": 0.1,
     "qkv_bias": False,
 }
+
+
+class GptAttention(nn.Module):
+    """Dense multi-head attention: q/k/v/out projections + shared attention core."""
+
+    def __init__(self, d_in, d_out, num_heads, dropout=0.0, qkv_bias=False):
+        super().__init__()
+        self.d_out = d_out
+        self.num_heads = num_heads
+        self.head_dim = d_out // num_heads
+        self.W_query = nn.Linear(d_in, d_out, bias=qkv_bias)
+        self.W_key = nn.Linear(d_in, d_out, bias=qkv_bias)
+        self.W_value = nn.Linear(d_in, d_out, bias=qkv_bias)
+        self.out_proj = nn.Linear(d_out, d_out)
+        self.attn = Attention(num_heads, self.head_dim, dropout=dropout)
+
+    def forward(self, x, kv_cache=None, layer_id=None, input_lens=None, cache_batch_indices=None):
+        q = self.W_query(x)
+        k = self.W_key(x)
+        v = self.W_value(x)
+        context = self.attn(
+            q,
+            k,
+            v,
+            kv_cache=kv_cache,
+            layer_id=layer_id,
+            input_lens=input_lens,
+            cache_batch_indices=cache_batch_indices,
+        )
+        return self.out_proj(context)
+
+
+class TransformerBlock(nn.Module):
+    def __init__(self, cfg):
+        super().__init__()
+        self.att = GptAttention(
+            d_in=cfg["emb_dim"],
+            d_out=cfg["emb_dim"],
+            num_heads=cfg["num_heads"],
+            dropout=cfg["drop_rate"],
+            qkv_bias=cfg["qkv_bias"],
+        )
+        self.ff = FeedForward(cfg)
+        self.norm1 = LayerNorm(cfg["emb_dim"])
+        self.norm2 = LayerNorm(cfg["emb_dim"])
+        self.drop_shortcut = nn.Dropout(cfg["drop_rate"])
+
+    def forward(self, x, kv_cache=None, layer_id=None, input_lens=None, cache_batch_indices=None):
+        shortcut = x
+        x = self.norm1(x)
+        x = self.att(
+            x,
+            kv_cache=kv_cache,
+            layer_id=layer_id,
+            input_lens=input_lens,
+            cache_batch_indices=cache_batch_indices,
+        )
+        x = self.drop_shortcut(x)
+        x = x + shortcut
+
+        shortcut = x
+        x = self.norm2(x)
+        x = self.ff(x)
+        x = self.drop_shortcut(x)
+        x = x + shortcut
+        return x
 
 
 class GptModel(nn.Module):

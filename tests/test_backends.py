@@ -4,10 +4,8 @@ from pathlib import Path
 import torch
 
 SRC = Path(__file__).resolve().parent.parent / "src"
-MODEL = SRC / "model"
-for path in (SRC, MODEL):
-    if str(path) not in sys.path:
-        sys.path.insert(0, str(path))
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
 
 from inference.backends.registry import load_backend
 
@@ -22,15 +20,16 @@ def test_load_gpt_backend():
     assert tokenizer.encode("hello")
 
 
-def test_load_hf_gpt_backend():
+def test_load_hf_backend():
     pytest = __import__("pytest")
     pytest.importorskip("transformers")
 
     device = torch.device("cpu")
     model, tokenizer = load_backend(
-        "hf-gpt",
+        "hf",
         checkpoint=None,
         device=device,
+        hf_model="gpt2",
         context_length=64,
     )
 

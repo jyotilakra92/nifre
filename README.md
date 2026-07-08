@@ -1,6 +1,6 @@
 # Inference Engine
 
-LLM inference engine with KV-cache, static batching, continuous batching, and a model-agnostic backend interface. Includes a FastAPI server and a reference GPT backend.
+LLM inference engine with KV-cache, static batching, continuous batching, and a model-agnostic backend interface. Includes a FastAPI server, a reference GPT backend, and a generic Hugging Face backend that runs almost any causal LM (Qwen, Llama, Mistral, GPT-2, ...).
 
 ## Features
 
@@ -9,8 +9,9 @@ LLM inference engine with KV-cache, static batching, continuous batching, and a 
 - **Continuous batching** — requests join and leave between decode steps
 - **Chunked prefill** — long prompts are cached in fixed-size chunks so decode can interleave
 - **Paged KV cache** — block-pooled K/V storage with per-sequence block tables (engine default)
-- **Prefix caching** — reuse cached K/V blocks across requests that share prompt prefixes
+- **Prefix caching** — reuse cached K/V across requests that share prompt prefixes (block-level for the custom backend, token-level for HF models; toggle with `--no-prefix-cache`)
 - **Model-agnostic API** — plug in backends via `InferenceModel` + `Tokenizer`
+- **Hugging Face backend** — run any `AutoModelForCausalLM` (Qwen, Llama, Mistral, ...) with `--model hf --hf-model <id>`
 - **FastAPI server** — HTTP completions with blocking JSON or SSE streaming (`stream: true`)
 - **Observability dashboard** — request health, latency, throughput, GPU/runtime, optimization history
 
@@ -19,7 +20,7 @@ LLM inference engine with KV-cache, static batching, continuous batching, and a 
 ```text
 nifre/
 ├── src/
-│   ├── inference/          # Engine, scheduler, server, backends
+│   ├── inference/          # Engine, scheduler, server, backends, models
 │   │   ├── engine.py
 │   │   ├── scheduler.py
 │   │   ├── kv_cache.py
@@ -28,8 +29,10 @@ nifre/
 │   │   ├── block_allocator.py
 │   │   ├── block_table.py
 │   │   ├── model_runner.py
+│   │   ├── attention.py     # Model-agnostic attention over the KV cache
 │   │   ├── server.py
-│   │   └── backends/       # Model adapters (hf-gpt, gpt)
+│   │   ├── models/         # Model definitions (gpt.py, layers.py)
+│   │   └── backends/       # Model adapters (hf, gpt)
 │   ├── generate.py         # Static-batched CLI
 │   ├── bench.py            # Synthetic load generator for auto-tune / perf testing
 │   ├── autotune/           # Classifier, policy, controller, admin API
@@ -40,17 +43,14 @@ nifre/
 │       ├── runtime_probe.py
 │       ├── optimization.py
 │       └── dashboard/      # FastAPI dashboard UI
-│   └── model/              # Reference GPT implementation
-│       ├── gpt_model.py
-│       └── attention.py
 ├── tests/                  # Smoke tests
 └── requirements.txt
 ```
 
-Set `PYTHONPATH` so both packages resolve:
+Set `PYTHONPATH` so the `inference` package resolves:
 
 ```bash
-export PYTHONPATH=src:src/model
+export PYTHONPATH=src
 ```
 
 ## Setup
@@ -67,7 +67,7 @@ pip install -r requirements.txt
 For sensible text output, place a trained checkpoint at:
 
 ```text
-src/model/checkpoints/gpt_model_checkpoint.pt
+src/checkpoints/gpt_model_checkpoint.pt
 ```
 
 Expected format:
@@ -84,7 +84,7 @@ Without a checkpoint, the server falls back to **random weights** (output will b
 ## Run tests
 
 ```bash
-PYTHONPATH=src:src/model python3 -m tests
+PYTHONPATH=src python3 -m tests
 ```
 
 ## FastAPI server
@@ -92,8 +92,8 @@ PYTHONPATH=src:src/model python3 -m tests
 Start the server (loads Hugging Face `gpt2` by default):
 
 ```bash
-PYTHONPATH=src:src/model python3 -m inference.server \
-  --model hf-gpt \
+PYTHONPATH=src python3 -m inference.server \
+  --model hf \
   --hf-model gpt2 \
   --context-length 256 \
   --port 8000 \
@@ -102,10 +102,53 @@ PYTHONPATH=src:src/model python3 -m inference.server \
 
 The custom PyTorch GPT backend is still available with `--model gpt` and an optional checkpoint.
 
+### Running any Hugging Face model (Qwen, Llama, Mistral, ...)
+
+The **`hf`** backend runs almost any `AutoModelForCausalLM` — just pass a Hub model id with `--hf-model`. Architecture-specific details (RoPE, GQA, learned vs. rotary positions) are handled inside the HF model, so no per-model code is needed.
+
+```bash
+# Qwen
+PYTHONPATH=src python3 -m inference.server \
+  --model hf \
+  --hf-model Qwen/Qwen2.5-0.5B-Instruct \
+  --context-length 2048 \
+  --max-concurrent 2
+
+# Llama (gated — run `huggingface-cli login` first)
+PYTHONPATH=src python3 -m inference.server \
+  --model hf \
+  --hf-model meta-llama/Llama-3.2-1B-Instruct \
+  --context-length 2048
+
+# Small Llama-architecture model (no auth, good for a quick test)
+PYTHONPATH=src python3 -m inference.server \
+  --model hf \
+  --hf-model HuggingFaceTB/SmolLM2-135M \
+  --context-length 2048
+```
+
+Then call it exactly like any other backend:
+
+```bash
+curl -s http://127.0.0.1:8000/v1/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"prompt": "The capital of France is", "max_new_tokens": 16}'
+```
+
+Notes:
+
+- **Weights** download from the Hugging Face Hub on first run (cached afterwards). Gated models (e.g. Llama) require `huggingface-cli login` or a `HF_TOKEN`.
+- **Tokenizer** is the model's own HF tokenizer (`AutoTokenizer`).
+- **`--context-length`** caps the KV cache length (clamped to the model's `max_position_embeddings`). Raise it for long prompts; higher values use more memory.
+- **Caching for HF models** — the `hf` backend uses Hugging Face's own `past_key_values` cache and gets these benefits:
+  - **Prefix caching: yes.** Shared prompt prefixes are reused across requests (see [Prefix caching](#prefix-caching)). Enabled by default; toggle with `--no-prefix-cache`.
+  - **Auto-tuning: yes.** Chunked prefill, token-budget scheduling, and concurrency are tuned exactly as for the custom backend.
+  - **Block-paged KV cache: no** (by design). nifre's block paging replaces the attention kernel, which HF owns. HF's cache already grows on demand (no fixed pre-allocation), so paging's anti-fragmentation win is moot, and the cross-request-sharing win is delivered by prefix caching instead. See [HF cache trade-offs](#why-hf-models-dont-use-block-paged-kv-cache).
+
 Or with uvicorn:
 
 ```bash
-PYTHONPATH=src:src/model uvicorn inference.server:app --host 127.0.0.1 --port 8000
+PYTHONPATH=src uvicorn inference.server:app --host 127.0.0.1 --port 8000
 ```
 
 Interactive API docs: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
@@ -181,11 +224,13 @@ Optional request field `"model"` overrides the model name echoed in responses (d
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--model` | `hf-gpt` | Registered backend name (`hf-gpt` or `gpt`) |
-| `--hf-model` | `gpt2` | Hugging Face model id (for `hf-gpt` backend) |
-| `--context-length` | `256` | Max context (truncates HF position embeddings) |
-| `--checkpoint` | `src/model/checkpoints/gpt_model_checkpoint.pt` | Weights path (custom `gpt` backend only) |
+| `--model` | `hf` | Registered backend name (`hf` = any HF model, or `gpt`) |
+| `--hf-model` | `gpt2` | Hugging Face model id (for the `hf` backend) |
+| `--context-length` | `256` | Max KV-cache context (clamped to the model's max positions) |
+| `--checkpoint` | `src/checkpoints/gpt_model_checkpoint.pt` | Weights path (custom `gpt` backend only) |
 | `--max-concurrent` | `2` | Max concurrent requests (cache slots) |
+| `--no-prefix-cache` | off | Disable prefix caching (reuse of shared prompt prefixes) |
+| `--no-paged-kv-cache` | off | Disable the block-paged KV cache (custom `gpt` backend only) |
 | `--host` | `127.0.0.1` | Bind address |
 | `--port` | `8000` | Port |
 
@@ -272,14 +317,28 @@ Request 2: [same system prompt 16 tok] + [user B]
   → try_load_prefix() hits 16 tokens → prefill only [user B]
 ```
 
-### How it works
+Prefix caching works for **both** backends, via the same engine hooks (`register_prefix` / `try_load_prefix`), with two implementations:
+
+### Custom `gpt` backend — block-level
 
 1. **Block-chained hashing** — each full block of `block_size` tokens is keyed by `(parent_hash, block_tokens)`. Lookup walks the chain and returns the longest cached prefix.
-2. **On prefill complete** — `PagedKVCache.register_prefix()` inserts the prompt's full blocks into the cache and retains them.
+2. **On prefill complete** — `PagedKVCache.register_prefix()` inserts the prompt's full blocks into the cache and retains them (shared via reference counting).
 3. **On new request** — `ModelRunner` calls `try_load_prefix()` before resetting the slot. On a hit, `prefill_offset` starts after the cached prefix.
 4. **On request finish** — the slot's block table is cleared; cached blocks stay alive via the prefix cache's references.
 
 Only **full blocks** are cached (`len(prompt) // block_size`). A 20-token prompt with `block_size=16` caches one block (16 tokens).
+
+### `hf` backend — block-chained (same hashing as the paged path)
+
+HF models keep a dense `past_key_values`, but `HFKVCache` still reuses it at **block granularity** using the same block-chained hashing as `PrefixCache`:
+
+1. **On prefill complete** — the prompt is split into full blocks of `block_size`; each block is keyed by `(parent_hash, block_tokens)` and its per-layer K/V slice is stored once. Shared prefix blocks hash to the same key, so they are **not duplicated in memory**.
+2. **On new request** — the chain is walked block-by-block and stops at the first miss (leaving ≥1 token for the forward pass). Matched block slices are concatenated back into a `DynamicCache` for the slot.
+3. LRU eviction on the block map (`prefix_cache_max_entries`, default 1024).
+
+Reusing cached K/V is numerically identical to recomputing them, so **outputs are unchanged** — enforced by `test_hf_prefix_cache_reuses_shared_prefix_without_changing_output`.
+
+**Metrics** — the HF prefix cache reports `hits`, `misses`, `hit_rate`, `tokens_reused`, `entries`, `memory_mb`, and `avg_lookup_ms` (via `HFKVCache.prefix_stats()`, surfaced under `gpu_runtime.engine_config.prefix_cache` in the observability snapshot). The throughput block also exposes `prefix_cache_reuse_ratio` = reused ÷ (reused + prefilled) tokens — the number that actually matters.
 
 ### Configuration
 
@@ -288,12 +347,21 @@ engine = Engine(
     model,
     max_concurrent_requests=4,
     device=device,
-    use_paged_kv_cache=True,   # required for prefix caching
-    use_prefix_cache=True,     # default
+    use_paged_kv_cache=True,   # custom gpt backend only; ignored by hf
+    use_prefix_cache=True,     # default; works for both gpt and hf
 )
 ```
 
-Prefix cache size defaults to **1024 entries** (LRU eviction). Disable with `use_prefix_cache=False`.
+Toggle from the server with `--no-prefix-cache`. The block-level cache (custom backend) defaults to **1024 entries**; the HF token-level cache defaults to **128 snapshots** — both LRU-evicted.
+
+### Why HF models don't use block-paged KV cache
+
+nifre's block paging is implemented **inside** its own attention kernel (`inference/attention.py`), which reads/writes fixed-size K/V blocks. Hugging Face models bring their own attention kernels and manage a dense `past_key_values` cache, so there is no seam to plug block paging into without reimplementing each architecture (RoPE, GQA, ...) the way vLLM does. That's out of scope here — but the two practical wins of paging are still covered for HF:
+
+- **Memory efficiency / no over-allocation** — HF's `DynamicCache` already grows on demand, so it never pre-allocates `max_seq_len` per slot the way nifre's non-paged `KVCache` does.
+- **Cross-request sharing** — delivered by the token-level prefix cache above.
+
+So HF-backed models get prefix caching + full auto-tuning; only the block-pool memory layout is backend-specific.
 
 ### Example: shared system prompt
 
@@ -338,7 +406,7 @@ curl -s http://127.0.0.1:8000/observability/api/metrics | python3 -m json.tool
 Poll metrics from a running inference server on a separate port:
 
 ```bash
-PYTHONPATH=src:src/model python3 -m observability.dashboard.server \
+PYTHONPATH=src python3 -m observability.dashboard.server \
   --port 9090 \
   --metrics-url http://127.0.0.1:8000/observability/api/metrics
 ```
@@ -361,7 +429,7 @@ obs.optimization.record_rollback("fp8-kv-cache", details="accuracy regression")
 The reference GPT model also supports static batched generation (no continuous scheduler):
 
 ```bash
-PYTHONPATH=src:src/model python3 -m generate \
+PYTHONPATH=src python3 -m generate \
   --prompt "Every effort moves you" \
   --prompt "The cat sat on the mat" \
   --max-new-tokens 20
@@ -378,7 +446,7 @@ from inference.engine import Engine
 from generate import get_device
 
 device = get_device()
-checkpoint = Path("src/model/checkpoints/gpt_model_checkpoint.pt")
+checkpoint = Path("src/checkpoints/gpt_model_checkpoint.pt")
 
 model, tokenizer = load_backend(
     "gpt",
@@ -462,7 +530,7 @@ The embedded auto-tuner observes metrics, classifies workload, proposes config c
 **Start with auto-tune enabled:**
 
 ```bash
-PYTHONPATH=src:src/model python3 -m inference.server \
+PYTHONPATH=src python3 -m inference.server \
   --auto-tune \
   --tuning-goal balanced \
   --tuning-interval 30 \
@@ -480,18 +548,51 @@ curl -X POST http://127.0.0.1:8000/v1/admin/tuning \
 
 The observability dashboard includes an **Auto-Tuning** panel (`/observability`) showing goal, pending attempt, last action, and live engine config.
 
+### Results: auto-tuning a Hugging Face model
+
+Live run of the `hf` backend serving **Qwen2.5-0.5B-Instruct** on Apple Silicon (MPS, fp16), auto-tune on (`balanced` goal), under the `rag` profile (6 concurrent clients, shared prompt prefix):
+
+```bash
+# server
+PYTHONPATH=src python3 -m inference.server \
+  --model hf --hf-model Qwen/Qwen2.5-0.5B-Instruct \
+  --context-length 512 --max-concurrent 6 \
+  --auto-tune --tuning-goal balanced --tuning-interval 10 --tuning-evaluation 12
+
+# load
+PYTHONPATH=src python3 -m bench --profile rag --duration 120 --concurrency 6 --max-new-tokens 32
+```
+
+![Observability dashboard: auto-tuning a Qwen HF model](docs/autotune-dashboard.png)
+
+What the dashboard shows for this run:
+
+| Metric | Value |
+|--------|-------|
+| Requests completed | 306 / 306 (0 errors) |
+| Throughput | ~261–272 tokens/sec |
+| TTFT p95 | 87 ms |
+| Auto-tune cost improvement | **+28.7%** (baseline 33.9 → 45.0 tok/s; latency 3099 → 2334 ms) |
+| Optimizations promoted / rolled back | 6 / 0 |
+| Auto-tune action | promoted `prefill_chunk_size` 128 → 96 ("trim prefill chunks to protect latency") |
+| Prefix-cache hit rate | **97.2%** (304 hits / 309 lookups) |
+| Prefix tokens reused | 19,456 (reuse ratio ≈ 0.47) |
+| Prefix-cache blocks stored | **4** (0.75 MB) — shared blocks deduplicated across all requests |
+
+The last two rows are the payoff of the block-chained HF prefix cache: hundreds of requests share the same ~4-block prefix, which is stored **once**, while the auto-tuner independently trims prefill chunk size to protect latency under load.
+
 ## Benchmark workloads
 
 Generate synthetic traffic against a running server (useful before enabling auto-tune):
 
 ```bash
 # Terminal 1 — server
-PYTHONPATH=src:src/model python3 -m inference.server --max-concurrent 4
+PYTHONPATH=src python3 -m inference.server --max-concurrent 4
 
 # Terminal 2 — benchmark
-PYTHONPATH=src:src/model python3 -m bench --profile chat --duration 30 --concurrency 4
-PYTHONPATH=src:src/model python3 -m bench --profile rag --duration 30
-PYTHONPATH=src:src/model python3 -m bench --profile batch --duration 30
+PYTHONPATH=src python3 -m bench --profile chat --duration 30 --concurrency 4
+PYTHONPATH=src python3 -m bench --profile rag --duration 30
+PYTHONPATH=src python3 -m bench --profile batch --duration 30
 ```
 
 Profiles:
@@ -504,13 +605,13 @@ Profiles:
 
 ## Comparing nifre vs vLLM (same weights)
 
-Both engines should use **Hugging Face `gpt2`** (124M). nifre loads it natively via the `hf-gpt` backend (same `transformers` model vLLM uses):
+Both engines should use **Hugging Face `gpt2`** (124M). nifre loads it natively via the `hf` backend (same `transformers` model vLLM uses):
 
 **nifre** (port 8000):
 
 ```bash
-PYTHONPATH=src:src/model python3 -m inference.server \
-  --model hf-gpt \
+PYTHONPATH=src python3 -m inference.server \
+  --model hf \
   --hf-model gpt2 \
   --context-length 256 \
   --max-concurrent 4
@@ -526,7 +627,7 @@ Use the same prompts. Greedy decode on a fixed prompt should match between engin
 
 | Setting | nifre | vLLM |
 |---------|-------|------|
-| Weights | `gpt2` via `--model hf-gpt` | `gpt2` |
+| Weights | `gpt2` via `--model hf` | `gpt2` |
 | Context | `--context-length 256` | `--max-model-len 256` |
 | Tokenizer | HF GPT-2 (`transformers`) | HF GPT-2 tokenizer |
 
@@ -535,18 +636,19 @@ Use the same prompts. Greedy decode on a fixed prompt should match between engin
 If you want to benchmark nifre's **custom** PyTorch GPT implementation with the same HF weights, import once:
 
 ```bash
-PYTHONPATH=src:src/model python3 -m inference.backends.import_hf_gpt2 \
+PYTHONPATH=src python3 -m inference.backends.import_hf_gpt2 \
   --model gpt2 \
   --context-length 256 \
-  --output src/model/checkpoints/gpt2_hf_checkpoint.pt
+  --output src/checkpoints/gpt2_hf_checkpoint.pt
 ```
 
-Then run with `--model gpt --checkpoint src/model/checkpoints/gpt2_hf_checkpoint.pt`.
+Then run with `--model gpt --checkpoint src/checkpoints/gpt2_hf_checkpoint.pt`.
 
 ## What is not included yet
 
 - Global block pool oversubscription (admission control when pool is full)
 - Fused paged-attention GPU kernels
 - Production auth, rate limits, or multi-GPU serving
+- Quantization
 
 These are natural next steps after the core engine is solid.

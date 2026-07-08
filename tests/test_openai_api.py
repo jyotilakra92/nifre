@@ -5,10 +5,8 @@ from pathlib import Path
 import pytest
 
 SRC = Path(__file__).resolve().parent.parent / "src"
-MODEL = SRC / "model"
-for path in (SRC, MODEL):
-    if str(path) not in sys.path:
-        sys.path.insert(0, str(path))
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
 
 from inference.openai_api import build_completion_response, completion_chunk_sse
 

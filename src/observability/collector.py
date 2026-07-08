@@ -59,11 +59,12 @@ class MetricsCollector:
             "continuous-batching",
             details=f"max_concurrent={engine.max_concurrent_requests}",
         )
-        if engine.use_paged_kv_cache and engine.use_prefix_cache:
-            self.optimization.record_promotion(
-                "prefix-cache",
-                details=f"block_size={engine.model.config.block_size}",
-            )
+        if engine.use_prefix_cache:
+            if engine.use_paged_kv_cache:
+                details = f"block_size={engine.model.config.block_size}"
+            else:
+                details = "block-chained (hf)"
+            self.optimization.record_promotion("prefix-cache", details=details)
 
     def on_request_enqueued(self) -> None:
         self.store.record_enqueue()

@@ -5,15 +5,13 @@ import torch
 from fastapi.testclient import TestClient
 
 SRC = Path(__file__).resolve().parent.parent / "src"
-MODEL = SRC / "model"
-for path in (SRC, MODEL):
-    if str(path) not in sys.path:
-        sys.path.insert(0, str(path))
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
 
 from inference.backends.gpt import GptInferenceModel, TiktokenTokenizer
 from inference.engine import Engine
 from inference.server import create_app
-from model.gpt_model import GPT_CONFIG_124M, GptModel
+from inference.models.gpt import GPT_CONFIG_124M, GptModel
 from observability import Observability
 from observability.metrics_store import latency_summary, percentile
 from observability.optimization import OptimizationTracker
