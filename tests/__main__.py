@@ -14,8 +14,10 @@ from tests.test_admin_tuning import (
     test_observability_tuning_route,
 )
 from tests.test_bench import (
+    test_compare_format_reports_both_labels_and_ratio,
     test_format_report,
     test_profiles_exist,
+    test_run_bench_counts_completion_tokens,
     test_run_bench_unknown_profile,
     test_run_bench_with_mock_request_fn,
 )
@@ -294,8 +296,10 @@ class SmokeTests(unittest.TestCase):
     def test_bench(self):
         test_profiles_exist()
         test_run_bench_with_mock_request_fn()
+        test_run_bench_counts_completion_tokens()
         test_run_bench_unknown_profile()
         test_format_report()
+        test_compare_format_reports_both_labels_and_ratio()
 
     def test_engine_token_callback(self):
         test_token_callback_emits_all_generated_tokens()

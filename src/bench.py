@@ -12,7 +12,8 @@ from dataclasses import dataclass, field
 from typing import Callable, List, Optional
 
 
-RequestFn = Callable[[str, int], tuple[float, bool]]
+# A request fn returns (latency_ms, success) or (latency_ms, success, completion_tokens).
+RequestFn = Callable[[str, int], tuple]
 
 
 @dataclass(frozen=True)
@@ -41,6 +42,9 @@ class BenchResult:
     requests_failed: int = 0
     client_avg_latency_ms: float = 0.0
     client_p95_latency_ms: float = 0.0
+    client_tokens_per_sec: float = 0.0
+    completion_tokens: int = 0
+    wall_time_sec: float = 0.0
     server_tokens_per_sec: float = 0.0
     server_ttft_p95_ms: float = 0.0
     server_prefix_cache_hits: int = 0
@@ -106,7 +110,7 @@ def _percentile(values: List[float], p: float) -> float:
 def default_request_fn(base_url: str) -> RequestFn:
     endpoint = base_url.rstrip("/") + "/v1/completions"
 
-    def send(prompt: str, max_new_tokens: int) -> tuple[float, bool]:
+    def send(prompt: str, max_new_tokens: int) -> tuple[float, bool, int]:
         payload = json.dumps({"prompt": prompt, "max_new_tokens": max_new_tokens}).encode()
         request = urllib.request.Request(
             endpoint,
@@ -117,12 +121,20 @@ def default_request_fn(base_url: str) -> RequestFn:
         start = time.perf_counter()
         try:
             with urllib.request.urlopen(request, timeout=120) as response:
-                response.read()
+                body = response.read()
+                ok = response.status == 200
             elapsed_ms = (time.perf_counter() - start) * 1000
-            return elapsed_ms, response.status == 200
+            tokens = 0
+            if ok:
+                try:
+                    usage = json.loads(body.decode()).get("usage", {})
+                    tokens = int(usage.get("completion_tokens", 0))
+                except (json.JSONDecodeError, AttributeError, TypeError, ValueError):
+                    tokens = 0
+            return elapsed_ms, ok, tokens
         except (urllib.error.URLError, TimeoutError):
             elapsed_ms = (time.perf_counter() - start) * 1000
-            return elapsed_ms, False
+            return elapsed_ms, False, 0
 
     return send
 
@@ -153,27 +165,33 @@ def run_bench(
     sent = 0
     ok = 0
     failed = 0
+    completion_tokens = 0
 
     def worker() -> None:
-        nonlocal prompt_index, sent, ok, failed
+        nonlocal prompt_index, sent, ok, failed, completion_tokens
         while time.time() < stop_at:
             with lock:
                 prompt = profile.prompts[prompt_index % len(profile.prompts)]
                 prompt_index += 1
-            latency_ms, success = send(prompt, config.max_new_tokens)
+            result = send(prompt, config.max_new_tokens)
+            latency_ms, success = result[0], result[1]
+            tokens = result[2] if len(result) > 2 else 0
             with lock:
                 sent += 1
                 latencies.append(latency_ms)
+                completion_tokens += tokens
                 if success:
                     ok += 1
                 else:
                     failed += 1
 
+    wall_start = time.perf_counter()
     threads = [threading.Thread(target=worker, daemon=True) for _ in range(config.concurrency)]
     for thread in threads:
         thread.start()
     for thread in threads:
         thread.join()
+    wall_time = time.perf_counter() - wall_start
 
     metrics = fetch_server_metrics(config.base_url)
     throughput = metrics.get("throughput", {})
@@ -188,6 +206,9 @@ def run_bench(
         requests_failed=failed,
         client_avg_latency_ms=sum(latencies) / len(latencies) if latencies else 0.0,
         client_p95_latency_ms=_percentile(latencies, 95),
+        client_tokens_per_sec=completion_tokens / wall_time if wall_time > 0 else 0.0,
+        completion_tokens=completion_tokens,
+        wall_time_sec=wall_time,
         server_tokens_per_sec=float(throughput.get("tokens_per_sec", 0.0)),
         server_ttft_p95_ms=float(latency.get("p95_ms", 0.0)),
         server_prefix_cache_hits=int(throughput.get("prefix_cache_hits", 0)),
@@ -202,6 +223,7 @@ def format_report(result: BenchResult) -> str:
         f"Duration: {result.duration_sec:.1f}s  Concurrency: {result.concurrency}",
         f"Requests: {result.requests_ok}/{result.requests_sent} ok ({result.requests_failed} failed)",
         f"Client latency avg/p95: {result.client_avg_latency_ms:.1f} ms / {result.client_p95_latency_ms:.1f} ms",
+        f"Client tokens/sec: {result.client_tokens_per_sec:.2f}  ({result.completion_tokens} tok in {result.wall_time_sec:.1f}s)",
         f"Server tokens/sec: {result.server_tokens_per_sec:.2f}",
         f"Server TTFT p95: {result.server_ttft_p95_ms:.1f} ms",
         f"Prefix cache hits: {result.server_prefix_cache_hits}",

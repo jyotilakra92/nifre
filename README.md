@@ -36,6 +36,7 @@ nifre/
 │   │   └── backends/       # Model adapters (hf, gpt)
 │   ├── generate.py         # Static-batched CLI
 │   ├── bench.py            # Synthetic load generator for auto-tune / perf testing
+│   ├── compare.py          # Engine-agnostic A/B harness (nifre vs vLLM)
 │   ├── autotune/           # Classifier, policy, controller, admin API
 │   ├── sampler.py          # Greedy sampling helper
 │   └── observability/      # Metrics, dashboard, optimization tracking
@@ -631,6 +632,44 @@ Use the same prompts. Greedy decode on a fixed prompt should match between engin
 | Weights | `gpt2` via `--model hf` | `gpt2` |
 | Context | `--context-length 256` | `--max-model-len 256` |
 | Tokenizer | HF GPT-2 (`transformers`) | HF GPT-2 tokenizer |
+
+### Automated A/B harness
+
+`compare.py` drives both servers with identical prompts and load and measures **client-side** latency and throughput (from each response's `usage.completion_tokens`), so the comparison is engine-agnostic:
+
+```bash
+PYTHONPATH=src python3 -m compare \
+  --a-url http://127.0.0.1:8000 --a-label nifre \
+  --b-url http://127.0.0.1:8001 --b-label vllm \
+  --profile rag --duration 60 --concurrency 8 --max-new-tokens 64
+```
+
+It prints tokens/sec, avg/p95 latency, and an A/B ratio (>1.0 favors A). vLLM is CUDA-only, so run this on a GPU (e.g. RunPod), not on Apple Silicon/MPS.
+
+### Running the comparison on a RunPod (CUDA) GPU
+
+```bash
+# 1. In the nifre repo (CUDA is auto-detected by get_device):
+pip install -r requirements.txt
+pip install vllm
+
+# 2. Terminal A — nifre (custom paged backend, or --model hf for HF weights):
+PYTHONPATH=src python3 -m inference.server \
+  --model hf --hf-model Qwen/Qwen2.5-0.5B-Instruct \
+  --context-length 2048 --max-concurrent 16 \
+  --auto-tune --tuning-goal throughput --port 8000
+
+# 3. Terminal B — vLLM, same model + context:
+vllm serve Qwen/Qwen2.5-0.5B-Instruct --port 8001 --max-model-len 2048
+
+# 4. Terminal C — A/B:
+PYTHONPATH=src python3 -m compare \
+  --a-url http://127.0.0.1:8000 --a-label nifre \
+  --b-url http://127.0.0.1:8001 --b-label vllm \
+  --profile rag --duration 60 --concurrency 16 --max-new-tokens 64
+```
+
+Expect vLLM to lead on raw tokens/sec (fused paged-attention CUDA kernels + CUDA graphs); nifre's differentiators are the self-improving auto-tuner and comparable prefix-cache hit rates. Prefix-cache hit rate is the most apples-to-apples metric — check nifre's `/observability` panel against vLLM's `/metrics`.
 
 ### Custom GPT backend + weight import (optional)
 
