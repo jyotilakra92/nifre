@@ -60,15 +60,27 @@ def create_engine(
     checkpoint: Path,
     max_concurrent: int,
     observability: Optional[Observability] = None,
+    *,
+    hf_model: str = "gpt2",
+    context_length: int = 256,
 ) -> Engine:
     device = get_device()
-    checkpoint_path = checkpoint if checkpoint.exists() else None
-    if checkpoint_path is None:
-        print(f"No checkpoint at {checkpoint} — using random weights")
+    loader_kwargs = {}
+    if model_backend == "hf-gpt":
+        loader_kwargs = {"hf_model": hf_model, "context_length": context_length}
     else:
-        print(f"Loading checkpoint: {checkpoint}")
+        checkpoint_path = checkpoint if checkpoint.exists() else None
+        if checkpoint_path is None:
+            print(f"No checkpoint at {checkpoint} — using random weights")
+        else:
+            print(f"Loading checkpoint: {checkpoint}")
 
-    model, _tokenizer = load_backend(model_backend, checkpoint_path, device)
+    if model_backend == "hf-gpt":
+        print(f"Loading Hugging Face model: {hf_model} (context_length={context_length})")
+        model, _tokenizer = load_backend(model_backend, None, device, **loader_kwargs)
+    else:
+        checkpoint_path = checkpoint if checkpoint.exists() else None
+        model, _tokenizer = load_backend(model_backend, checkpoint_path, device, **loader_kwargs)
     metrics = observability.collector if observability else None
     engine = Engine(
         model,
@@ -82,7 +94,7 @@ def create_engine(
 
 
 def create_app(
-    model_backend: str = "gpt",
+    model_backend: str = "hf-gpt",
     checkpoint: Path = DEFAULT_CHECKPOINT,
     max_concurrent: int = 2,
     engine: Optional[Engine] = None,
@@ -94,6 +106,8 @@ def create_app(
     tuning_goal: str = "balanced",
     tuning_interval_sec: float = 30.0,
     tuning_evaluation_sec: float = 60.0,
+    hf_model: str = "gpt2",
+    context_length: int = 256,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -114,13 +128,26 @@ def create_app(
                 app.state.observability = observability
         else:
             device = get_device()
-            checkpoint_path = checkpoint if checkpoint.exists() else None
+            runtime = "huggingface" if model_backend == "hf-gpt" else "custom"
             obs = None
             if enable_observability:
-                obs = observability or Observability(model_name=model_backend, runtime="custom")
-            model, app.state.tokenizer = load_backend(
-                model_backend, checkpoint_path, device
-            )
+                obs = observability or Observability(model_name=model_backend, runtime=runtime)
+            loader_kwargs = {}
+            if model_backend == "hf-gpt":
+                loader_kwargs = {"hf_model": hf_model, "context_length": context_length}
+                print(f"Loading Hugging Face model: {hf_model} (context_length={context_length})")
+                model, app.state.tokenizer = load_backend(
+                    model_backend, None, device, **loader_kwargs
+                )
+            else:
+                checkpoint_path = checkpoint if checkpoint.exists() else None
+                if checkpoint_path is None:
+                    print(f"No checkpoint at {checkpoint} — using random weights")
+                else:
+                    print(f"Loading checkpoint: {checkpoint}")
+                model, app.state.tokenizer = load_backend(
+                    model_backend, checkpoint_path, device, **loader_kwargs
+                )
             app.state.engine = Engine(
                 model,
                 max_concurrent_requests=max_concurrent,
@@ -223,11 +250,27 @@ def main():
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument(
         "--model",
-        default="gpt",
+        default="hf-gpt",
         choices=list_backends(),
-        help="Registered model backend to load",
+        help="Registered model backend to load (default: hf-gpt = Hugging Face GPT-2)",
     )
-    parser.add_argument("--checkpoint", type=Path, default=DEFAULT_CHECKPOINT)
+    parser.add_argument(
+        "--checkpoint",
+        type=Path,
+        default=DEFAULT_CHECKPOINT,
+        help="Checkpoint path for the custom gpt backend only",
+    )
+    parser.add_argument(
+        "--hf-model",
+        default="gpt2",
+        help="Hugging Face model id when using --model hf-gpt",
+    )
+    parser.add_argument(
+        "--context-length",
+        type=int,
+        default=256,
+        help="Max context length (truncates HF position embeddings)",
+    )
     parser.add_argument("--max-concurrent", type=int, default=2)
     parser.add_argument(
         "--auto-tune",
@@ -262,9 +305,13 @@ def main():
         tuning_goal=args.tuning_goal,
         tuning_interval_sec=args.tuning_interval,
         tuning_evaluation_sec=args.tuning_evaluation,
+        hf_model=args.hf_model,
+        context_length=args.context_length,
     )
     print(f"Serving on http://{args.host}:{args.port}")
     print(f"Model backend: {args.model}")
+    if args.model == "hf-gpt":
+        print(f"HF model: {args.hf_model}  context_length={args.context_length}")
     print("Docs:  http://{host}:{port}/docs".format(host=args.host, port=args.port))
     print('POST /v1/completions  {"prompt": "...", "max_new_tokens": 20}  # blocking JSON')
     print('POST /v1/completions  {"prompt": "...", "max_new_tokens": 20, "stream": true}  # SSE')

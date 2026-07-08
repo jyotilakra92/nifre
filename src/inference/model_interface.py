@@ -3,10 +3,11 @@ from typing import List, Protocol, Union
 import torch
 
 from inference.data_model import ModelConfig
+from inference.hf_kv_cache import HFKVCache
 from inference.kv_cache import KVCache
 from inference.paged_kv_cache import PagedKVCache
 
-KVCacheType = Union[KVCache, PagedKVCache]
+KVCacheType = Union[KVCache, PagedKVCache, HFKVCache]
 
 
 class Tokenizer(Protocol):

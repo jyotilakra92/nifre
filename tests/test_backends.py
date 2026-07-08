@@ -20,3 +20,21 @@ def test_load_gpt_backend():
     assert model.config.pad_token_id == 50256
     assert tokenizer.pad_token_id == model.config.pad_token_id
     assert tokenizer.encode("hello")
+
+
+def test_load_hf_gpt_backend():
+    pytest = __import__("pytest")
+    pytest.importorskip("transformers")
+
+    device = torch.device("cpu")
+    model, tokenizer = load_backend(
+        "hf-gpt",
+        checkpoint=None,
+        device=device,
+        context_length=64,
+    )
+
+    assert model.config.num_layers == 12
+    assert model.config.max_seq_len == 64
+    assert getattr(model, "supports_paged_kv_cache", True) is False
+    assert tokenizer.encode("hello")

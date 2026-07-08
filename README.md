@@ -1,6 +1,6 @@
 # Inference Engine
 
-A small, educational LLM inference engine with KV-cache, static batching, continuous batching, and a model-agnostic backend interface. Includes a FastAPI server and a reference GPT backend.
+LLM inference engine with KV-cache, static batching, continuous batching, and a model-agnostic backend interface. Includes a FastAPI server and a reference GPT backend.
 
 ## Features
 
@@ -29,7 +29,7 @@ nifre/
 │   │   ├── block_table.py
 │   │   ├── model_runner.py
 │   │   ├── server.py
-│   │   └── backends/       # Model adapters (gpt today)
+│   │   └── backends/       # Model adapters (hf-gpt, gpt)
 │   ├── generate.py         # Static-batched CLI
 │   ├── bench.py            # Synthetic load generator for auto-tune / perf testing
 │   ├── autotune/           # Classifier, policy, controller, admin API
@@ -89,14 +89,18 @@ PYTHONPATH=src:src/model python3 -m tests
 
 ## FastAPI server
 
-Start the server:
+Start the server (loads Hugging Face `gpt2` by default):
 
 ```bash
 PYTHONPATH=src:src/model python3 -m inference.server \
-  --model gpt \
+  --model hf-gpt \
+  --hf-model gpt2 \
+  --context-length 256 \
   --port 8000 \
   --max-concurrent 2
 ```
+
+The custom PyTorch GPT backend is still available with `--model gpt` and an optional checkpoint.
 
 Or with uvicorn:
 
@@ -177,8 +181,10 @@ Optional request field `"model"` overrides the model name echoed in responses (d
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--model` | `gpt` | Registered backend name |
-| `--checkpoint` | `src/model/checkpoints/gpt_model_checkpoint.pt` | Weights path |
+| `--model` | `hf-gpt` | Registered backend name (`hf-gpt` or `gpt`) |
+| `--hf-model` | `gpt2` | Hugging Face model id (for `hf-gpt` backend) |
+| `--context-length` | `256` | Max context (truncates HF position embeddings) |
+| `--checkpoint` | `src/model/checkpoints/gpt_model_checkpoint.pt` | Weights path (custom `gpt` backend only) |
 | `--max-concurrent` | `2` | Max concurrent requests (cache slots) |
 | `--host` | `127.0.0.1` | Bind address |
 | `--port` | `8000` | Port |
@@ -495,6 +501,47 @@ Profiles:
 | `chat` | Short prompts, moderate concurrency |
 | `rag` | Long shared prefix + short question suffixes (prefix-cache friendly) |
 | `batch` | Many unique prompts |
+
+## Comparing nifre vs vLLM (same weights)
+
+Both engines should use **Hugging Face `gpt2`** (124M). nifre loads it natively via the `hf-gpt` backend (same `transformers` model vLLM uses):
+
+**nifre** (port 8000):
+
+```bash
+PYTHONPATH=src:src/model python3 -m inference.server \
+  --model hf-gpt \
+  --hf-model gpt2 \
+  --context-length 256 \
+  --max-concurrent 4
+```
+
+**vLLM** (port 8001) — same model id and context cap:
+
+```bash
+vllm serve gpt2 --host 127.0.0.1 --port 8001 --max-model-len 256
+```
+
+Use the same prompts. Greedy decode on a fixed prompt should match between engines before benchmarking throughput.
+
+| Setting | nifre | vLLM |
+|---------|-------|------|
+| Weights | `gpt2` via `--model hf-gpt` | `gpt2` |
+| Context | `--context-length 256` | `--max-model-len 256` |
+| Tokenizer | HF GPT-2 (`transformers`) | HF GPT-2 tokenizer |
+
+### Custom GPT backend + weight import (optional)
+
+If you want to benchmark nifre's **custom** PyTorch GPT implementation with the same HF weights, import once:
+
+```bash
+PYTHONPATH=src:src/model python3 -m inference.backends.import_hf_gpt2 \
+  --model gpt2 \
+  --context-length 256 \
+  --output src/model/checkpoints/gpt2_hf_checkpoint.pt
+```
+
+Then run with `--model gpt --checkpoint src/model/checkpoints/gpt2_hf_checkpoint.pt`.
 
 ## What is not included yet
 

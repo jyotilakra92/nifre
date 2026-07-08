@@ -131,7 +131,8 @@ from tests.test_engine import (
 )
 from tests.test_generate import test_model_runner_via_engine, test_static_batch_matches_single
 from tests.test_kv_cache import test_kv_cache_smoke
-from tests.test_backends import test_load_gpt_backend
+from tests.test_backends import test_load_gpt_backend, test_load_hf_gpt_backend
+from tests.test_hf_backend import test_hf_gpt_engine_generate
 from tests.test_scheduler import (
     test_mark_prefill_done_rejects_incomplete_prefill,
     test_scheduler_smoke,
@@ -325,6 +326,10 @@ class SmokeTests(unittest.TestCase):
 
     def test_backends(self):
         test_load_gpt_backend()
+        test_load_hf_gpt_backend()
+
+    def test_hf_backend_engine(self):
+        test_hf_gpt_engine_generate()
 
     def test_openai_api(self):
         test_completion_chunk_sse_shape()

@@ -42,6 +42,10 @@ class Engine:
         self.metrics = metrics_collector
         self.prefill_chunk_size = prefill_chunk_size
         self.max_tokens_per_step = max_tokens_per_step
+        if getattr(model, "supports_paged_kv_cache", True) is False:
+            use_paged_kv_cache = False
+        if getattr(model, "supports_prefix_cache", True) is False:
+            use_prefix_cache = False
         self.use_paged_kv_cache = use_paged_kv_cache
         self.use_prefix_cache = use_prefix_cache
         self._token_callbacks: dict[str, TokenCallback] = {}
@@ -203,6 +207,12 @@ class Engine:
 
     def _ensure_cache(self) -> None:
         if self.cache is None:
+            make_cache = getattr(self.model, "make_kv_cache", None)
+            if make_cache is not None:
+                self.cache = make_cache(self.device)
+                self.cache.init_batch(self.max_concurrent_requests)
+                return
+
             dtype = getattr(self.model, "dtype", torch.float16)
             if self.use_paged_kv_cache:
                 self.cache = make_paged_kv_cache(
