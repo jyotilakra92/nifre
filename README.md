@@ -1,6 +1,6 @@
 # Inference Engine
 
-A **self-improving** LLM inference engine with KV-cache, static batching, continuous batching, and a model-agnostic backend interface. A closed-loop auto-tuner continuously observes live metrics, proposes configuration changes, and promotes or rolls them back based on measured impact — so the engine tunes itself to the workload at runtime. Includes a FastAPI server, a reference GPT backend, and a generic Hugging Face backend that runs almost any causal LM (Qwen, Llama, Mistral, GPT-2, ...).
+Nifre is an open-source self-optimizing inference runtime for single-node LLM serving. It comes with KV-cache, static batching, continuous batching, and a model-agnostic backend interface. A closed-loop auto-tuner continuously observes live metrics, proposes configuration changes, and promotes or rolls them back based on measured impact — so the engine tunes itself to the workload at runtime. Includes a FastAPI server, a reference GPT backend, and a generic Hugging Face backend that runs almost any causal LM (Qwen, Llama, Mistral, GPT-2, ...).
 
 ## Features
 
