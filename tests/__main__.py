@@ -92,10 +92,15 @@ from tests.test_observability import (
     test_optimization_tracker,
     test_percentile,
 )
+from tests.test_openai_api import (
+    test_build_completion_response_shape,
+    test_completion_chunk_sse_shape,
+)
 from tests.test_server import (
-    test_completions_non_streaming_explicit,
+    test_completions_non_streaming_openai_shape,
     test_completions_smoke,
-    test_completions_stream_sse,
+    test_completions_stream_openai_shape,
+    test_completions_stream_respects_requested_model_name,
     test_completions_validation,
     test_health,
 )
@@ -207,6 +212,10 @@ class SmokeTests(unittest.TestCase):
     def test_backends(self):
         test_load_gpt_backend()
 
+    def test_openai_api(self):
+        test_completion_chunk_sse_shape()
+        test_build_completion_response_shape()
+
     def test_server_health(self):
         test_health()
 
@@ -217,10 +226,11 @@ class SmokeTests(unittest.TestCase):
         test_completions_smoke()
 
     def test_server_non_streaming(self):
-        test_completions_non_streaming_explicit()
+        test_completions_non_streaming_openai_shape()
 
     def test_server_stream(self):
-        test_completions_stream_sse()
+        test_completions_stream_openai_shape()
+        test_completions_stream_respects_requested_model_name()
 
     def test_model_runner_chunked(self):
         test_chunked_prefill_matches_single_step()

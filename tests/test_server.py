@@ -1,7 +1,7 @@
+import json
 import sys
 from pathlib import Path
 
-import tiktoken
 import torch
 from fastapi.testclient import TestClient
 
@@ -38,6 +38,20 @@ def _test_client():
     return TestClient(app)
 
 
+def _parse_sse_events(lines):
+    events = []
+    done = False
+    for line in lines:
+        if not line or not line.startswith("data: "):
+            continue
+        data = line.removeprefix("data: ")
+        if data == "[DONE]":
+            done = True
+            break
+        events.append(json.loads(data))
+    return events, done
+
+
 def test_health():
     with _test_client() as client:
         response = client.get("/health")
@@ -54,7 +68,7 @@ def test_completions_validation():
         assert response.status_code == 422
 
 
-def test_completions_non_streaming_explicit():
+def test_completions_non_streaming_openai_shape():
     with _test_client() as client:
         for payload in (
             {"prompt": "hello", "max_new_tokens": 2},
@@ -64,9 +78,14 @@ def test_completions_non_streaming_explicit():
             assert response.status_code == 200
             assert response.headers["content-type"].startswith("application/json")
             body = response.json()
-            assert body["prompt"] == "hello"
-            assert len(body["output_token_ids"]) == 2
-            assert "request_id" in body
+            assert body["object"] == "text_completion"
+            assert body["id"].startswith("cmpl-")
+            assert body["model"] == "gpt"
+            assert len(body["choices"]) == 1
+            assert "text" in body["choices"][0]
+            assert body["choices"][0]["finish_reason"] == "length"
+            assert body["usage"]["prompt_tokens"] == 1
+            assert body["usage"]["completion_tokens"] == 2
 
 
 def test_completions_smoke():
@@ -77,15 +96,13 @@ def test_completions_smoke():
         )
         assert response.status_code == 200
         payload = response.json()
-        assert payload["prompt"] == "hello"
+        assert payload["object"] == "text_completion"
         assert payload["model"] == "gpt"
-        assert len(payload["output_token_ids"]) == 2
-        assert payload["text"]
+        assert payload["usage"]["completion_tokens"] == 2
+        assert payload["choices"][0]["text"]
 
 
-def test_completions_stream_sse():
-    import json
-
+def test_completions_stream_openai_shape():
     with _test_client() as client:
         with client.stream(
             "POST",
@@ -95,23 +112,47 @@ def test_completions_stream_sse():
             assert response.status_code == 200
             assert response.headers["content-type"].startswith("text/event-stream")
 
-            events = []
-            done = False
-            for line in response.iter_lines():
-                if not line or not line.startswith("data: "):
-                    continue
-                data = line.removeprefix("data: ")
-                if data == "[DONE]":
-                    done = True
-                    break
-                events.append(json.loads(data))
+            events, done = _parse_sse_events(list(response.iter_lines()))
 
         assert done
         assert len(events) == 3
-        assert all("token_id" in event and "text" in event for event in events)
+
+        completion_id = events[0]["id"]
+        created = events[0]["created"]
+        for i, event in enumerate(events):
+            assert event["id"] == completion_id
+            assert event["created"] == created
+            assert event["object"] == "text_completion"
+            assert event["model"] == "gpt"
+            assert len(event["choices"]) == 1
+            assert event["choices"][0]["index"] == 0
+            assert "text" in event["choices"][0]
+            if i < len(events) - 1:
+                assert event["choices"][0]["finish_reason"] is None
+            else:
+                assert event["choices"][0]["finish_reason"] == "length"
 
         blocking = client.post(
             "/v1/completions",
             json={"prompt": "hello", "max_new_tokens": 3, "stream": False},
         ).json()
-        assert [event["token_id"] for event in events] == blocking["output_token_ids"]
+        streamed_text = "".join(event["choices"][0]["text"] for event in events)
+        assert streamed_text == blocking["choices"][0]["text"]
+
+
+def test_completions_stream_respects_requested_model_name():
+    with _test_client() as client:
+        with client.stream(
+            "POST",
+            "/v1/completions",
+            json={
+                "prompt": "hello",
+                "max_new_tokens": 1,
+                "stream": True,
+                "model": "my-custom-model",
+            },
+        ) as response:
+            events, done = _parse_sse_events(list(response.iter_lines()))
+
+        assert done
+        assert events[0]["model"] == "my-custom-model"

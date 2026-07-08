@@ -8,6 +8,8 @@ A small, educational LLM inference engine with KV-cache, static batching, contin
 - **Static batching** — run multiple prompts in one forward pass (fixed batch)
 - **Continuous batching** — requests join and leave between decode steps
 - **Chunked prefill** — long prompts are cached in fixed-size chunks so decode can interleave
+- **Paged KV cache** — block-pooled K/V storage with per-sequence block tables (engine default)
+- **Prefix caching** — reuse cached K/V blocks across requests that share prompt prefixes
 - **Model-agnostic API** — plug in backends via `InferenceModel` + `Tokenizer`
 - **FastAPI server** — HTTP completions with blocking JSON or SSE streaming (`stream: true`)
 - **Observability dashboard** — request health, latency, throughput, GPU/runtime, optimization history
@@ -21,6 +23,10 @@ nifre/
 │   │   ├── engine.py
 │   │   ├── scheduler.py
 │   │   ├── kv_cache.py
+│   │   ├── paged_kv_cache.py
+│   │   ├── prefix_cache.py
+│   │   ├── block_allocator.py
+│   │   ├── block_table.py
 │   │   ├── model_runner.py
 │   │   ├── server.py
 │   │   └── backends/       # Model adapters (gpt today)
@@ -110,7 +116,7 @@ curl -s http://127.0.0.1:8000/health | python3 -m json.tool
 
 **Completions (non-streaming, default)**
 
-Omit `stream` or set `"stream": false` to receive one JSON response when generation finishes.
+Omit `stream` or set `"stream": false` to receive one JSON response when generation finishes. The response follows the OpenAI **text_completion** shape:
 
 ```bash
 curl -s -X POST http://127.0.0.1:8000/v1/completions \
@@ -123,17 +129,29 @@ Example response:
 
 ```json
 {
-  "request_id": "9810ebc3",
-  "prompt": "Every effort moves you",
-  "text": "Every effort moves you ...",
-  "output_token_ids": [20625, 10325, ...],
-  "model": "gpt"
+  "id": "cmpl-abc123",
+  "object": "text_completion",
+  "created": 1700000000,
+  "model": "gpt",
+  "choices": [
+    {
+      "text": " ...generated text only...",
+      "index": 0,
+      "logprobs": null,
+      "finish_reason": "length"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 4,
+    "completion_tokens": 20,
+    "total_tokens": 24
+  }
 }
 ```
 
-**Completions (streaming SSE)**
+**Completions (streaming SSE, OpenAI-compatible)**
 
-Set `"stream": true` to receive tokens as Server-Sent Events:
+Set `"stream": true` to receive Server-Sent Events in OpenAI streaming format:
 
 ```bash
 curl -N -X POST http://127.0.0.1:8000/v1/completions \
@@ -144,10 +162,14 @@ curl -N -X POST http://127.0.0.1:8000/v1/completions \
 Example events:
 
 ```text
-data: {"token_id": 1234, "text": " hello"}
-data: {"token_id": 5678, "text": " world"}
+data: {"id":"cmpl-abc123","object":"text_completion","created":1700000000,"model":"gpt","choices":[{"text":" hello","index":0,"logprobs":null,"finish_reason":null}]}
+
+data: {"id":"cmpl-abc123","object":"text_completion","created":1700000000,"model":"gpt","choices":[{"text":" world","index":0,"logprobs":null,"finish_reason":"length"}]}
+
 data: [DONE]
 ```
+
+Optional request field `"model"` overrides the model name echoed in responses (defaults to the loaded backend).
 
 ### Server options
 
@@ -204,11 +226,82 @@ Requests that do not fit are deferred to the next step. This smooths latency und
 
 ### Tests
 
-Chunking is covered in `tests/test_model_runner.py` and `tests/test_scheduler.py`:
+Chunking is covered in `tests/test_model_runner.py` and `tests/test_scheduler.py`.
 
-```bash
-PYTHONPATH=src:src/model python3 -m tests
+## Paged KV cache
+
+The engine uses **PagedKVCache** by default (`use_paged_kv_cache=True`). Physical K/V memory is split into fixed-size **blocks** managed by a shared `BlockAllocator`. Each sequence has a `BlockTable` that maps logical token positions to physical block IDs.
+
+```text
+BlockAllocator (shared pool)
+  ├── Block 0  →  K/V tensors at index 0, all layers
+  ├── Block 1  →  K/V tensors at index 1, all layers
+  └── ...
+
+Slot 0 BlockTable:  [physical 3] [physical 7]     →  tokens 0–7, 8–15
+Slot 1 BlockTable:  [physical 1]                  →  tokens 0–7
 ```
+
+Blocks use **reference counting** (`retain` / `release`) so the same physical block can be shared safely (e.g. by the prefix cache and multiple sequences).
+
+Disable paging to use the dense per-slot `KVCache`:
+
+```python
+engine = Engine(model, max_concurrent_requests=2, device=device, use_paged_kv_cache=False)
+```
+
+`ModelConfig.block_size` (default **16**) controls how many tokens fit in each block. GPT backends read `block_size` from the model config dict when present.
+
+## Prefix caching
+
+When many requests share the same prompt prefix (system prompts, RAG context, few-shot examples), prefix caching skips redundant prefill work by reusing already-computed K/V blocks.
+
+```text
+Request 1: [system prompt 16 tok] + [user A]
+  → full prefill → register_prefix() stores blocks in PrefixCache
+
+Request 2: [same system prompt 16 tok] + [user B]
+  → try_load_prefix() hits 16 tokens → prefill only [user B]
+```
+
+### How it works
+
+1. **Block-chained hashing** — each full block of `block_size` tokens is keyed by `(parent_hash, block_tokens)`. Lookup walks the chain and returns the longest cached prefix.
+2. **On prefill complete** — `PagedKVCache.register_prefix()` inserts the prompt's full blocks into the cache and retains them.
+3. **On new request** — `ModelRunner` calls `try_load_prefix()` before resetting the slot. On a hit, `prefill_offset` starts after the cached prefix.
+4. **On request finish** — the slot's block table is cleared; cached blocks stay alive via the prefix cache's references.
+
+Only **full blocks** are cached (`len(prompt) // block_size`). A 20-token prompt with `block_size=16` caches one block (16 tokens).
+
+### Configuration
+
+```python
+engine = Engine(
+    model,
+    max_concurrent_requests=4,
+    device=device,
+    use_paged_kv_cache=True,   # required for prefix caching
+    use_prefix_cache=True,     # default
+)
+```
+
+Prefix cache size defaults to **1024 entries** (LRU eviction). Disable with `use_prefix_cache=False`.
+
+### Example: shared system prompt
+
+```python
+system = tokenizer.encode("You are a helpful assistant. " * 10)
+q1 = system + tokenizer.encode("What is Python?")
+q2 = system + tokenizer.encode("What is Rust?")
+
+engine.generate(q1, max_new_tokens=20)
+engine.generate(q2, max_new_tokens=20)
+# Second request skips prefill for the shared system tokens.
+```
+
+### Tests
+
+Prefix caching is covered in `tests/test_prefix_cache.py`, `tests/test_paged_kv_cache.py`, and `tests/test_block_allocator.py`.
 
 ## Observability dashboard
 
@@ -228,8 +321,8 @@ curl -s http://127.0.0.1:8000/observability/api/metrics | python3 -m json.tool
 |---------|---------|
 | **Request health** | requests/sec, active, queued, completed, error rate, timeout rate |
 | **Latency** | TTFT, total latency, prefill/decode step latency, inter-token latency (P50/P95/P99) |
-| **Throughput** | tokens/sec, input/output tokens/sec, tokens/request, batch size, decode iterations/sec |
-| **GPU / runtime** | GPU util & memory, KV cache memory & utilization, runtime, model, precision |
+| **Throughput** | tokens/sec, input/output tokens/sec, tokens/request, prefill tokens/step, prefix cache hits & tokens saved |
+| **GPU / runtime** | GPU util & memory, KV cache memory & utilization, cache type, block pool, prefix cache hit rate |
 | **Optimization history** | baseline vs current latency/throughput, cost improvement, attempted/promoted/rolled back |
 
 ### Standalone dashboard (optional)
@@ -248,7 +341,7 @@ PYTHONPATH=src:src/model python3 -m observability.dashboard.server \
 from observability import Observability
 
 obs = Observability(model_name="gpt", runtime="custom")
-obs.attach(engine)
+obs.attach(engine)  # auto-records promotions for paged-kv-cache, prefix-cache, chunked-prefill, etc.
 
 obs.optimization.record_attempt("continuous-batching", details="enabled scheduler v2")
 obs.optimization.record_promotion("continuous-batching")
@@ -285,7 +378,13 @@ model, tokenizer = load_backend(
     device,
 )
 
-engine = Engine(model, max_concurrent_requests=2, device=device)
+engine = Engine(
+    model,
+    max_concurrent_requests=2,
+    device=device,
+    use_paged_kv_cache=True,
+    use_prefix_cache=True,
+)
 
 # Single blocking request
 token_ids = tokenizer.encode("Every effort moves you")
@@ -313,19 +412,21 @@ Client
   → FastAPI server (server.py)
     → EngineWorker (background step loop)
       → Engine (scheduler + KV cache lifecycle)
-        → ModelRunner (prefill / decode forwards)
+        → ModelRunner (prefill / decode forwards, prefix cache lookup)
           → InferenceModel backend (e.g. GPT)
-            → Attention reads/writes KVCache
+            → Attention reads/writes PagedKVCache or KVCache
 ```
 
 | Component | Role |
 |-----------|------|
 | **EngineWorker** | Single thread owns ``engine.step()``; HTTP handlers submit via ``generate`` / ``generate_stream`` |
 | **Scheduler** | Queue, batch slots, token budget per step (decode-first), enforces `prefill_complete` |
-| **Engine** | Owns cache, calls scheduler + model runner each step; configures `prefill_chunk_size` |
-| **ModelRunner** | Batched prefill chunks + decode forwards + greedy sampling |
+| **Engine** | Owns cache, calls scheduler + model runner each step; configures chunking and prefix cache |
+| **ModelRunner** | Batched prefill chunks + decode forwards; `try_load_prefix` on slot prep |
 | **KVCache** | Dense per-slot storage (optional via `use_paged_kv_cache=False`) |
-| **PagedKVCache** | Block-pooled K/V storage (engine default) |
+| **PagedKVCache** | Block-pooled K/V storage with `BlockAllocator` + `BlockTable` per slot (engine default) |
+| **PrefixCache** | Block-chained hash map from token prefixes to shared physical blocks |
+| **BlockAllocator** | Physical block pool with reference counting for shared blocks |
 | **Backend** | Weights, tokenizer, cache-aware forward |
 
 ## Adding a new model backend
@@ -348,8 +449,8 @@ See `src/inference/model_interface.py` and `src/inference/backends/gpt.py` for t
 
 ## What is not included yet
 
+- Global block pool oversubscription (admission control when pool is full)
 - Fused paged-attention GPU kernels
-- OpenAI-compatible streaming response shape
 - Production auth, rate limits, or multi-GPU serving
 
 These are natural next steps after the core engine is solid.

@@ -1,19 +1,23 @@
 """FastAPI server exposing the continuous-batching inference engine."""
 
 import argparse
-import json
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Iterator, List, Optional
+from typing import List, Optional
 
 import uvicorn
 from fastapi import FastAPI, Request
 from pydantic import BaseModel, Field
-from starlette.responses import StreamingResponse
+from starlette.responses import JSONResponse, StreamingResponse
 
 from inference.backends.registry import list_backends, load_backend
 from inference.engine import Engine
 from inference.engine_worker import EngineWorker
+from inference.openai_api import (
+    build_completion_response,
+    new_completion_id,
+    stream_openai_completion_events,
+)
 from generate import get_device
 from observability import Observability
 from observability.dashboard.server import register_observability_routes
@@ -27,46 +31,27 @@ class CompletionRequest(BaseModel):
     prompt: str = Field(..., min_length=1)
     max_new_tokens: int = Field(default=20, ge=1)
     stream: bool = Field(default=False)
-
-
-class CompletionResponse(BaseModel):
-    request_id: str
-    prompt: str
-    text: str
-    output_token_ids: List[int]
-    model: str
-
-
-def stream_completion_events(
-    worker: EngineWorker,
-    tokenizer,
-    prompt_token_ids: List[int],
-    max_new_tokens: int,
-) -> Iterator[str]:
-    for token_id in worker.generate_stream(prompt_token_ids, max_new_tokens):
-        text = tokenizer.decode([token_id])
-        payload = json.dumps({"token_id": token_id, "text": text})
-        yield f"data: {payload}\n\n"
-    yield "data: [DONE]\n\n"
+    model: Optional[str] = Field(default=None)
 
 
 def _completions_blocking(
     worker: EngineWorker,
     tokenizer,
     prompt_token_ids: List[int],
-    prompt: str,
     max_new_tokens: int,
     model_backend: str,
-) -> CompletionResponse:
+    requested_model: Optional[str],
+) -> JSONResponse:
     result = worker.generate(prompt_token_ids, max_new_tokens=max_new_tokens)
-    text = tokenizer.decode(result.prompt_token_ids + result.output_token_ids)
-    return CompletionResponse(
-        request_id=result.request_id,
-        prompt=prompt,
-        text=text,
-        output_token_ids=result.output_token_ids,
-        model=model_backend,
+    completion_text = tokenizer.decode(result.output_token_ids)
+    payload = build_completion_response(
+        completion_id=new_completion_id(),
+        model=requested_model or model_backend,
+        completion_text=completion_text,
+        prompt_tokens=len(result.prompt_token_ids),
+        completion_tokens=len(result.output_token_ids),
     )
+    return JSONResponse(payload)
 
 
 def create_engine(
@@ -173,11 +158,12 @@ def create_app(
 
         if body.stream:
             return StreamingResponse(
-                stream_completion_events(
+                stream_openai_completion_events(
                     worker,
                     tokenizer,
                     token_ids,
                     body.max_new_tokens,
+                    body.model or request.app.state.model_backend,
                 ),
                 media_type="text/event-stream",
             )
@@ -186,9 +172,9 @@ def create_app(
             worker,
             tokenizer,
             token_ids,
-            body.prompt,
             body.max_new_tokens,
             request.app.state.model_backend,
+            body.model,
         )
 
     if enable_observability:
