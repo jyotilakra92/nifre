@@ -51,7 +51,7 @@ def batch_token_ids(token_lists, device, pad_id=GPT2_PAD_TOKEN_ID):
         lengths.append(len(tokens))
         padding = [pad_id] * (max_len - len(tokens))
         batch.append(padding + tokens)
-    token_ids = torch.tensor(batch, device=device)
+    token_ids = torch.tensor(batch, device=device, dtype=torch.long)
     input_lens = torch.tensor(lengths, device=device, dtype=torch.long)
     return token_ids, input_lens
 

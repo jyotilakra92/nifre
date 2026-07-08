@@ -71,7 +71,7 @@ class ModelRunner:
     @torch.no_grad()
     def decode(self, cache: KVCacheType, requests: List[InferenceRequest]) -> List[int]:
         tokens = [[request.output_token_ids[-1]] for request in requests]
-        token_ids = torch.tensor(tokens, device=self.device)
+        token_ids = torch.tensor(tokens, device=self.device, dtype=torch.long)
         cache_batch_indices = [request.batch_idx for request in requests]
 
         logits = self.model(
