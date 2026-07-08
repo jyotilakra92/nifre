@@ -37,6 +37,7 @@ nifre/
 │   ├── generate.py         # Static-batched CLI
 │   ├── bench.py            # Synthetic load generator for auto-tune / perf testing
 │   ├── compare.py          # Engine-agnostic A/B harness (nifre vs vLLM)
+│   ├── server_metrics.py   # Normalize nifre JSON + vLLM Prometheus metrics
 │   ├── autotune/           # Classifier, policy, controller, admin API
 │   ├── sampler.py          # Greedy sampling helper
 │   └── observability/      # Metrics, dashboard, optimization tracking
@@ -635,16 +636,25 @@ Use the same prompts. Greedy decode on a fixed prompt should match between engin
 
 ### Automated A/B harness
 
-`compare.py` drives both servers with identical prompts and load and measures **client-side** latency and throughput (from each response's `usage.completion_tokens`), so the comparison is engine-agnostic:
+`compare.py` drives both servers with identical prompts and load. It reports:
+
+- **Client (harness):** tokens/sec, avg/p95 latency, completion tokens
+- **Throughput (server):** tokens/sec, input/output split, requests/sec, error rate
+- **Latency (server):** TTFT p50/p95, total request latency, decode step, inter-token
+- **GPU / KV cache:** GPU util & memory, KV cache utilization
+- **Prefix cache:** hits, tokens saved, hit rate, reuse ratio, entries, memory
+
+nifre metrics come from `/observability/api/metrics`; vLLM from `/metrics` (Prometheus).
 
 ```bash
 PYTHONPATH=src python3 -m compare \
   --a-url http://127.0.0.1:8000 --a-label nifre \
   --b-url http://127.0.0.1:8001 --b-label vllm \
+  --model Qwen/Qwen2.5-0.5B-Instruct \
   --profile rag --duration 60 --concurrency 8 --max-new-tokens 64
 ```
 
-It prints tokens/sec, avg/p95 latency, and an A/B ratio (>1.0 favors A). vLLM is CUDA-only, so run this on a GPU (e.g. RunPod), not on Apple Silicon/MPS.
+Each section prints an A/B ratio (>1.0 favors nifre for throughput; latency rows are inverted so >1.0 still favors nifre). vLLM is CUDA-only — run on a GPU pod, not Apple Silicon/MPS.
 
 ### Running the comparison on a RunPod (CUDA) GPU
 
@@ -669,7 +679,7 @@ PYTHONPATH=src python3 -m compare \
   --profile rag --duration 60 --concurrency 16 --max-new-tokens 64
 ```
 
-Expect vLLM to lead on raw tokens/sec (fused paged-attention CUDA kernels + CUDA graphs); nifre's differentiators are the self-improving auto-tuner and comparable prefix-cache hit rates. Prefix-cache hit rate is the most apples-to-apples metric — check nifre's `/observability` panel against vLLM's `/metrics`.
+Expect vLLM to lead on raw tokens/sec (fused paged-attention CUDA kernels + CUDA graphs); nifre's differentiators are the self-improving auto-tuner and comparable prefix-cache behavior. The compare harness reports prefix hits, hit rate, reuse ratio, TTFT, GPU/KV utilization, and more — not just prefix cache alone.
 
 ### Custom GPT backend + weight import (optional)
 

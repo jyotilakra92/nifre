@@ -11,6 +11,8 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Callable, List, Optional
 
+from server_metrics import ServerMetrics, fetch_server_metrics
+
 
 # A request fn returns (latency_ms, success) or (latency_ms, success, completion_tokens).
 RequestFn = Callable[[str, int], tuple]
@@ -50,6 +52,7 @@ class BenchResult:
     server_ttft_p95_ms: float = 0.0
     server_prefix_cache_hits: int = 0
     server_prefix_tokens_saved: int = 0
+    server_metrics: ServerMetrics | None = None
     latencies_ms: List[float] = field(default_factory=list)
 
 
@@ -149,15 +152,6 @@ def default_request_fn(base_url: str, model: Optional[str] = None) -> RequestFn:
     return send
 
 
-def fetch_server_metrics(base_url: str) -> dict:
-    endpoint = base_url.rstrip("/") + "/observability/api/metrics"
-    try:
-        with urllib.request.urlopen(endpoint, timeout=5) as response:
-            return json.loads(response.read().decode())
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError):
-        return {}
-
-
 def run_bench(
     config: BenchConfig,
     *,
@@ -204,8 +198,6 @@ def run_bench(
     wall_time = time.perf_counter() - wall_start
 
     metrics = fetch_server_metrics(config.base_url)
-    throughput = metrics.get("throughput", {})
-    latency = metrics.get("latency", {}).get("ttft", {})
 
     return BenchResult(
         profile=config.profile,
@@ -219,10 +211,11 @@ def run_bench(
         client_tokens_per_sec=completion_tokens / wall_time if wall_time > 0 else 0.0,
         completion_tokens=completion_tokens,
         wall_time_sec=wall_time,
-        server_tokens_per_sec=float(throughput.get("tokens_per_sec", 0.0)),
-        server_ttft_p95_ms=float(latency.get("p95_ms", 0.0)),
-        server_prefix_cache_hits=int(throughput.get("prefix_cache_hits", 0)),
-        server_prefix_tokens_saved=int(throughput.get("prefix_cache_tokens_saved", 0)),
+        server_tokens_per_sec=float(metrics.tokens_per_sec or 0.0),
+        server_ttft_p95_ms=float(metrics.ttft_p95_ms or 0.0),
+        server_prefix_cache_hits=int(metrics.prefix_cache_hits or 0),
+        server_prefix_tokens_saved=int(metrics.prefix_tokens_saved or 0),
+        server_metrics=metrics,
         latencies_ms=latencies,
     )
 

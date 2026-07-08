@@ -13,6 +13,10 @@ from tests.test_admin_tuning import (
     test_health_exposes_auto_tune_endpoint,
     test_observability_tuning_route,
 )
+from tests.test_server_metrics import (
+    test_from_nifre_observability_extracts_key_fields,
+    test_from_vllm_prometheus_extracts_throughput_and_cache,
+)
 from tests.test_bench import (
     test_compare_format_reports_both_labels_and_ratio,
     test_format_report,
@@ -300,6 +304,10 @@ class SmokeTests(unittest.TestCase):
         test_run_bench_unknown_profile()
         test_format_report()
         test_compare_format_reports_both_labels_and_ratio()
+
+    def test_server_metrics(self):
+        test_from_nifre_observability_extracts_key_fields()
+        test_from_vllm_prometheus_extracts_throughput_and_cache()
 
     def test_engine_token_callback(self):
         test_token_callback_emits_all_generated_tokens()

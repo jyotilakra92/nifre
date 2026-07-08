@@ -1,15 +1,15 @@
 """Side-by-side A/B benchmark of two OpenAI-compatible completion servers.
 
-Engine-agnostic: it only uses client-measured latency and throughput (from each
-response's ``usage.completion_tokens``), so it compares nifre against vLLM (or
-any ``/v1/completions`` server) fairly on the same prompts and load.
+Compares client-measured latency/throughput plus server-side metrics from
+nifre's ``/observability/api/metrics`` JSON and vLLM's ``/metrics`` Prometheus
+endpoint (throughput, TTFT, GPU/KV utilization, prefix cache, etc.).
 
 Example (on a CUDA box, same weights on both):
 
-    # nifre on :8000, vLLM on :8001
     PYTHONPATH=src python3 -m compare \
         --a-url http://127.0.0.1:8000 --a-label nifre \
         --b-url http://127.0.0.1:8001 --b-label vllm \
+        --model Qwen/Qwen2.5-0.5B-Instruct \
         --profile rag --duration 60 --concurrency 8 --max-new-tokens 64
 """
 
@@ -24,6 +24,7 @@ from bench import (
     default_request_fn,
     run_bench,
 )
+from server_metrics import ServerMetrics
 
 
 def _warmup(base_url: str, count: int, max_new_tokens: int, model: str | None) -> None:
@@ -43,39 +44,135 @@ def _bench(base_url: str, config: BenchConfig) -> BenchResult:
     ))
 
 
-def _ratio(a: float, b: float) -> str:
-    if b == 0:
+def _ratio(a: float | None, b: float | None, *, higher_is_better: bool = True) -> str:
+    if a is None or b is None or b == 0:
         return "n/a"
-    return f"{a / b:.2f}x"
+    ratio = a / b
+    if not higher_is_better:
+        ratio = b / a if a else 0
+    return f"{ratio:.2f}x"
 
 
-def format_comparison(
+def _fmt(value: float | int | None, *, suffix: str = "", precision: int = 1) -> str:
+    if value is None:
+        return "n/a"
+    if isinstance(value, int):
+        return f"{value}{suffix}"
+    return f"{value:.{precision}f}{suffix}"
+
+
+def _metrics(result: BenchResult) -> ServerMetrics:
+    return result.server_metrics or ServerMetrics(source="unknown")
+
+
+def _comparison_table(
     a_label: str,
     b_label: str,
-    a: BenchResult,
-    b: BenchResult,
-) -> str:
-    rows = [
-        ("requests ok", f"{a.requests_ok}/{a.requests_sent}", f"{b.requests_ok}/{b.requests_sent}", ""),
-        ("client tokens/sec", f"{a.client_tokens_per_sec:.1f}", f"{b.client_tokens_per_sec:.1f}",
-         _ratio(a.client_tokens_per_sec, b.client_tokens_per_sec)),
-        ("avg latency ms", f"{a.client_avg_latency_ms:.1f}", f"{b.client_avg_latency_ms:.1f}",
-         _ratio(b.client_avg_latency_ms, a.client_avg_latency_ms)),
-        ("p95 latency ms", f"{a.client_p95_latency_ms:.1f}", f"{b.client_p95_latency_ms:.1f}",
-         _ratio(b.client_p95_latency_ms, a.client_p95_latency_ms)),
-    ]
-
+    rows: list[tuple[str, str, str, str]],
+) -> list[str]:
+    if not rows:
+        return []
     metric_w = max(len(r[0]) for r in rows)
     a_w = max(len(a_label), max(len(r[1]) for r in rows))
     b_w = max(len(b_label), max(len(r[2]) for r in rows))
-
     header = f"{'metric':<{metric_w}}  {a_label:>{a_w}}  {b_label:>{b_w}}  {'A/B':>6}"
     lines = [header, "-" * len(header)]
     for name, av, bv, ratio in rows:
         lines.append(f"{name:<{metric_w}}  {av:>{a_w}}  {bv:>{b_w}}  {ratio:>6}")
-    lines.append("")
-    lines.append("(A/B > 1.0 favors A: higher tokens/sec, lower latency)")
-    return "\n".join(lines)
+    return lines
+
+
+def format_comparison(a_label: str, b_label: str, a: BenchResult, b: BenchResult) -> str:
+    ma, mb = _metrics(a), _metrics(b)
+    sections: list[str] = []
+
+    client_rows = [
+        ("requests ok", f"{a.requests_ok}/{a.requests_sent}", f"{b.requests_ok}/{b.requests_sent}", ""),
+        ("client tokens/sec", _fmt(a.client_tokens_per_sec), _fmt(b.client_tokens_per_sec),
+         _ratio(a.client_tokens_per_sec, b.client_tokens_per_sec)),
+        ("client avg latency ms", _fmt(a.client_avg_latency_ms), _fmt(b.client_avg_latency_ms),
+         _ratio(a.client_avg_latency_ms, b.client_avg_latency_ms, higher_is_better=False)),
+        ("client p95 latency ms", _fmt(a.client_p95_latency_ms), _fmt(b.client_p95_latency_ms),
+         _ratio(a.client_p95_latency_ms, b.client_p95_latency_ms, higher_is_better=False)),
+        ("completion tokens", str(a.completion_tokens), str(b.completion_tokens), ""),
+    ]
+    sections.append("=== Client (measured by harness) ===")
+    sections.extend(_comparison_table(a_label, b_label, client_rows))
+
+    throughput_rows = [
+        ("server tokens/sec", _fmt(ma.tokens_per_sec), _fmt(mb.tokens_per_sec),
+         _ratio(ma.tokens_per_sec, mb.tokens_per_sec)),
+        ("output tokens/sec", _fmt(ma.output_tokens_per_sec), _fmt(mb.output_tokens_per_sec),
+         _ratio(ma.output_tokens_per_sec, mb.output_tokens_per_sec)),
+        ("input tokens/sec", _fmt(ma.input_tokens_per_sec), _fmt(mb.input_tokens_per_sec),
+         _ratio(ma.input_tokens_per_sec, mb.input_tokens_per_sec)),
+        ("requests/sec", _fmt(ma.requests_per_sec, precision=2), _fmt(mb.requests_per_sec, precision=2),
+         _ratio(ma.requests_per_sec, mb.requests_per_sec)),
+        ("requests completed", _fmt(ma.requests_completed), _fmt(mb.requests_completed), ""),
+        ("error rate", _fmt(ma.error_rate, precision=4), _fmt(mb.error_rate, precision=4), ""),
+    ]
+    sections.append("")
+    sections.append("=== Throughput (server-reported) ===")
+    sections.extend(_comparison_table(a_label, b_label, throughput_rows))
+
+    latency_rows = [
+        ("TTFT p50 ms", _fmt(ma.ttft_p50_ms), _fmt(mb.ttft_p50_ms),
+         _ratio(ma.ttft_p50_ms, mb.ttft_p50_ms, higher_is_better=False)),
+        ("TTFT p95 ms", _fmt(ma.ttft_p95_ms), _fmt(mb.ttft_p95_ms),
+         _ratio(ma.ttft_p95_ms, mb.ttft_p95_ms, higher_is_better=False)),
+        ("total latency p50 ms", _fmt(ma.total_latency_p50_ms), _fmt(mb.total_latency_p50_ms),
+         _ratio(ma.total_latency_p50_ms, mb.total_latency_p50_ms, higher_is_better=False)),
+        ("total latency p95 ms", _fmt(ma.total_latency_p95_ms), _fmt(mb.total_latency_p95_ms),
+         _ratio(ma.total_latency_p95_ms, mb.total_latency_p95_ms, higher_is_better=False)),
+        ("decode step p95 ms", _fmt(ma.decode_step_p95_ms), _fmt(mb.decode_step_p95_ms),
+         _ratio(ma.decode_step_p95_ms, mb.decode_step_p95_ms, higher_is_better=False)),
+        ("inter-token p95 ms", _fmt(ma.inter_token_p95_ms), _fmt(mb.inter_token_p95_ms),
+         _ratio(ma.inter_token_p95_ms, mb.inter_token_p95_ms, higher_is_better=False)),
+    ]
+    sections.append("")
+    sections.append("=== Latency (server-reported) ===")
+    sections.extend(_comparison_table(a_label, b_label, latency_rows))
+
+    resource_rows = [
+        ("GPU util %", _fmt(ma.gpu_utilization_pct), _fmt(mb.gpu_utilization_pct),
+         _ratio(ma.gpu_utilization_pct, mb.gpu_utilization_pct)),
+        ("GPU memory GB", _fmt(ma.gpu_memory_gb, precision=2), _fmt(mb.gpu_memory_gb, precision=2), ""),
+        ("KV cache util %", _fmt(ma.kv_cache_utilization_pct), _fmt(mb.kv_cache_utilization_pct),
+         _ratio(ma.kv_cache_utilization_pct, mb.kv_cache_utilization_pct)),
+    ]
+    if mb.extra.get("requests_running") is not None:
+        resource_rows.append((
+            "requests running/waiting",
+            "n/a",
+            f"{mb.extra.get('requests_running', 'n/a')}/{mb.extra.get('requests_waiting', 'n/a')}",
+            "",
+        ))
+    sections.append("")
+    sections.append("=== GPU / KV cache ===")
+    sections.extend(_comparison_table(a_label, b_label, resource_rows))
+
+    prefix_rows = [
+        ("prefix cache hits", _fmt(ma.prefix_cache_hits), _fmt(mb.prefix_cache_hits),
+         _ratio(ma.prefix_cache_hits, mb.prefix_cache_hits)),
+        ("prefix tokens saved", _fmt(ma.prefix_tokens_saved), _fmt(mb.prefix_tokens_saved),
+         _ratio(ma.prefix_tokens_saved, mb.prefix_tokens_saved)),
+        ("prefix hit rate", _fmt(ma.prefix_hit_rate, precision=4), _fmt(mb.prefix_hit_rate, precision=4),
+         _ratio(ma.prefix_hit_rate, mb.prefix_hit_rate)),
+        ("prefix reuse ratio", _fmt(ma.prefix_cache_reuse_ratio, precision=4),
+         _fmt(mb.prefix_cache_reuse_ratio, precision=4),
+         _ratio(ma.prefix_cache_reuse_ratio, mb.prefix_cache_reuse_ratio)),
+        ("prefix entries", _fmt(ma.prefix_cache_entries), _fmt(mb.prefix_cache_entries), ""),
+        ("prefix cache MB", _fmt(ma.prefix_cache_memory_mb, precision=2),
+         _fmt(mb.prefix_cache_memory_mb, precision=2), ""),
+    ]
+    sections.append("")
+    sections.append("=== Prefix cache ===")
+    sections.extend(_comparison_table(a_label, b_label, prefix_rows))
+
+    sections.append("")
+    sections.append(f"Metric sources: {a_label}={ma.source}, {b_label}={mb.source}")
+    sections.append("(A/B > 1.0 favors A for throughput/utilization; latency rows invert so >1.0 still favors A)")
+    return "\n".join(sections)
 
 
 def main() -> None:

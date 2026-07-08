@@ -58,6 +58,8 @@ def test_compare_format_reports_both_labels_and_ratio():
     text = format_comparison("nifre", "vllm", a, b)
     assert "nifre" in text and "vllm" in text
     assert "client tokens/sec" in text
+    assert "Prefix cache" in text
+    assert "TTFT p95 ms" in text
     assert "0.50x" in text  # nifre 200 / vllm 400
 
 
