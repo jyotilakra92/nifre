@@ -31,6 +31,8 @@ nifre/
 │   │   ├── server.py
 │   │   └── backends/       # Model adapters (gpt today)
 │   ├── generate.py         # Static-batched CLI
+│   ├── bench.py            # Synthetic load generator for auto-tune / perf testing
+│   ├── autotune/           # Classifier, policy, controller, admin API
 │   ├── sampler.py          # Greedy sampling helper
 │   └── observability/      # Metrics, dashboard, optimization tracking
 │       ├── metrics_store.py
@@ -446,6 +448,53 @@ BACKENDS = {
 5. Run: `python3 -m inference.server --model my_model`
 
 See `src/inference/model_interface.py` and `src/inference/backends/gpt.py` for the reference adapter.
+
+## Auto-tuning
+
+The embedded auto-tuner observes metrics, classifies workload, proposes config changes, and promotes or rolls back after an evaluation window.
+
+**Start with auto-tune enabled:**
+
+```bash
+PYTHONPATH=src:src/model python3 -m inference.server \
+  --auto-tune \
+  --tuning-goal balanced \
+  --tuning-interval 30 \
+  --tuning-evaluation 60
+```
+
+**Admin API** (also available when observability is enabled):
+
+```bash
+curl http://127.0.0.1:8000/v1/admin/tuning
+curl -X POST http://127.0.0.1:8000/v1/admin/tuning \
+  -H 'Content-Type: application/json' \
+  -d '{"enabled": true, "goal": "latency"}'
+```
+
+The observability dashboard includes an **Auto-Tuning** panel (`/observability`) showing goal, pending attempt, last action, and live engine config.
+
+## Benchmark workloads
+
+Generate synthetic traffic against a running server (useful before enabling auto-tune):
+
+```bash
+# Terminal 1 — server
+PYTHONPATH=src:src/model python3 -m inference.server --max-concurrent 4
+
+# Terminal 2 — benchmark
+PYTHONPATH=src:src/model python3 -m bench --profile chat --duration 30 --concurrency 4
+PYTHONPATH=src:src/model python3 -m bench --profile rag --duration 30
+PYTHONPATH=src:src/model python3 -m bench --profile batch --duration 30
+```
+
+Profiles:
+
+| Profile | Simulates |
+|---------|-----------|
+| `chat` | Short prompts, moderate concurrency |
+| `rag` | Long shared prefix + short question suffixes (prefix-cache friendly) |
+| `batch` | Many unique prompts |
 
 ## What is not included yet
 

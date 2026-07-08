@@ -8,6 +8,63 @@ for path in (SRC, MODEL):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
+from tests.test_admin_tuning import (
+    test_admin_tuning_enable_and_update_goal,
+    test_admin_tuning_get_status,
+    test_auto_tune_flag_starts_enabled,
+    test_health_exposes_auto_tune_endpoint,
+    test_observability_tuning_route,
+)
+from tests.test_bench import (
+    test_format_report,
+    test_profiles_exist,
+    test_run_bench_unknown_profile,
+    test_run_bench_with_mock_request_fn,
+)
+from tests.test_tuning_controller import (
+    test_controller_promotes_on_latency_improvement,
+    test_controller_respects_cooldown,
+    test_controller_rolls_back_on_latency_regression,
+    test_controller_rolls_back_on_neutral_result,
+    test_controller_skips_without_min_completed_requests,
+    test_controller_starts_attempt_and_applies_changes,
+    test_evaluation_helpers,
+)
+from tests.test_tuning_policy import (
+    test_policy_accepts_string_goal,
+    test_policy_balanced_queue_high_reduces_chunks_after_cache_init,
+    test_policy_holds_on_error_elevated,
+    test_policy_latency_sensitive_decreases_chunk_and_budget,
+    test_policy_prefix_friendly_enables_prefix_cache,
+    test_policy_respects_lower_bound,
+    test_policy_returns_none_when_no_action,
+    test_policy_throughput_low_increases_token_budget,
+    test_policy_throughput_queue_high_increases_concurrency_before_cache_init,
+    test_policy_throughput_queue_high_skips_concurrency_after_cache_init,
+)
+from tests.test_workload_classifier import (
+    test_classifier_error_elevated,
+    test_classifier_latency_sensitive,
+    test_classifier_multiple_labels,
+    test_classifier_prefix_friendly,
+    test_classifier_queue_high_not_triggered_by_brief_spike,
+    test_classifier_queue_high_requires_sustained_depth,
+    test_classifier_throughput_low_only_under_load,
+    test_workload_snapshot_from_metrics,
+    test_workload_snapshot_prefix_hit_rate_zero_when_no_tokens,
+)
+from tests.test_engine_reconfigure import (
+    test_get_config_returns_current_settings,
+    test_reconfigure_cache_flags_before_first_step,
+    test_reconfigure_max_concurrent_before_cache_init,
+    test_reconfigure_max_concurrent_decrease_after_cache_init,
+    test_reconfigure_max_tokens_per_step_affects_next_schedule,
+    test_reconfigure_prefill_chunk_size_applies_to_new_requests_only,
+    test_reconfigure_rejects_cache_type_toggle_after_cache_init,
+    test_reconfigure_rejects_invalid_values,
+    test_reconfigure_rejects_max_concurrent_increase_after_cache_init,
+    test_reconfigure_round_trip,
+)
 from tests.test_prefix_cache import (
     test_engine_prefix_cache_disabled,
     test_engine_reuses_prefix_for_shared_prompt,
@@ -178,6 +235,63 @@ class SmokeTests(unittest.TestCase):
 
     def test_engine(self):
         test_engine_smoke()
+
+    def test_engine_reconfigure(self):
+        test_get_config_returns_current_settings()
+        test_reconfigure_round_trip()
+        test_reconfigure_prefill_chunk_size_applies_to_new_requests_only()
+        test_reconfigure_max_tokens_per_step_affects_next_schedule()
+        test_reconfigure_rejects_invalid_values()
+        test_reconfigure_max_concurrent_before_cache_init()
+        test_reconfigure_max_concurrent_decrease_after_cache_init()
+        test_reconfigure_rejects_max_concurrent_increase_after_cache_init()
+        test_reconfigure_rejects_cache_type_toggle_after_cache_init()
+        test_reconfigure_cache_flags_before_first_step()
+
+    def test_workload_classifier(self):
+        test_workload_snapshot_from_metrics()
+        test_workload_snapshot_prefix_hit_rate_zero_when_no_tokens()
+        test_classifier_latency_sensitive()
+        test_classifier_prefix_friendly()
+        test_classifier_throughput_low_only_under_load()
+        test_classifier_error_elevated()
+        test_classifier_queue_high_requires_sustained_depth()
+        test_classifier_queue_high_not_triggered_by_brief_spike()
+        test_classifier_multiple_labels()
+
+    def test_tuning_policy(self):
+        test_policy_holds_on_error_elevated()
+        test_policy_latency_sensitive_decreases_chunk_and_budget()
+        test_policy_throughput_queue_high_increases_concurrency_before_cache_init()
+        test_policy_throughput_queue_high_skips_concurrency_after_cache_init()
+        test_policy_throughput_low_increases_token_budget()
+        test_policy_prefix_friendly_enables_prefix_cache()
+        test_policy_balanced_queue_high_reduces_chunks_after_cache_init()
+        test_policy_returns_none_when_no_action()
+        test_policy_respects_lower_bound()
+        test_policy_accepts_string_goal()
+
+    def test_tuning_controller(self):
+        test_controller_starts_attempt_and_applies_changes()
+        test_controller_promotes_on_latency_improvement()
+        test_controller_rolls_back_on_latency_regression()
+        test_controller_rolls_back_on_neutral_result()
+        test_controller_skips_without_min_completed_requests()
+        test_controller_respects_cooldown()
+        test_evaluation_helpers()
+
+    def test_admin_tuning(self):
+        test_admin_tuning_get_status()
+        test_admin_tuning_enable_and_update_goal()
+        test_observability_tuning_route()
+        test_health_exposes_auto_tune_endpoint()
+        test_auto_tune_flag_starts_enabled()
+
+    def test_bench(self):
+        test_profiles_exist()
+        test_run_bench_with_mock_request_fn()
+        test_run_bench_unknown_profile()
+        test_format_report()
 
     def test_engine_token_callback(self):
         test_token_callback_emits_all_generated_tokens()

@@ -132,6 +132,12 @@
     <div class="events" id="optimization-events"></div>
   </section>
 
+  <section id="auto-tuning">
+    <h2>6. Auto-Tuning</h2>
+    <div class="grid grid-4" id="tuning-cards"></div>
+    <div class="events" id="tuning-details"></div>
+  </section>
+
   <script>
     const charts = {};
 
@@ -203,8 +209,14 @@
 
     async function refresh() {
       try {
-        const res = await fetch("/api/metrics");
+        const metricsPath = document.body.dataset.metricsPath || "/api/metrics";
+        const tuningPath = document.body.dataset.tuningPath || "/observability/api/tuning";
+        const [res, tuningRes] = await Promise.all([
+          fetch(metricsPath),
+          fetch(tuningPath).catch(() => null),
+        ]);
         const data = await res.json();
+        const tuning = tuningRes && tuningRes.ok ? await tuningRes.json() : null;
         const h = data.request_health;
         const t = data.throughput;
         const g = data.gpu_runtime;
@@ -274,6 +286,30 @@
           .map((e) =>
             `<div class="event"><span class="action ${e.action}">${e.action}</span><span>${e.name}</span><span style="color:var(--muted)">${e.details || ""}</span></div>`
           ).join("") || "<div style='color:var(--muted)'>No optimization events yet.</div>";
+
+        if (tuning && tuning.available) {
+          const ecfg = tuning.engine_config || {};
+          document.getElementById("tuning-cards").innerHTML = [
+            card("Enabled", tuning.enabled ? "yes" : "no"),
+            card("Goal", tuning.goal || "—", true),
+            card("Pending", tuning.pending_attempt || "—", true),
+            card("Last action", tuning.last_action || "—", true),
+            card("Prefill chunk", ecfg.prefill_chunk_size ?? "—", true),
+            card("Token budget", ecfg.max_tokens_per_step ?? "—", true),
+            card("Max concurrent", ecfg.max_concurrent_requests ?? "—", true),
+            card("Prefix cache", ecfg.use_prefix_cache ? "on" : "off", true),
+          ].join("");
+          const pendingText = tuning.pending
+            ? `${tuning.pending.name}: ${tuning.pending.reason}`
+            : (tuning.last_reason || "No active tuning attempt.");
+          document.getElementById("tuning-details").innerHTML =
+            `<div class="event"><span class="action attempted">status</span><span>${pendingText}</span></div>`;
+        } else {
+          document.getElementById("tuning-cards").innerHTML =
+            card("Auto-tune", "unavailable", true);
+          document.getElementById("tuning-details").innerHTML =
+            "<div style='color:var(--muted)'>Enable observability on the server to use auto-tuning.</div>";
+        }
 
         renderLatencyTable(data.latency);
         updateChart("chart-requests", ts.requests_per_sec);

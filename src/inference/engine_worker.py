@@ -102,6 +102,11 @@ class EngineWorker:
             with self._lock:
                 self.engine.unregister_token_callback(request_id)
 
+    def reconfigure(self, **kwargs):
+        """Apply runtime engine config changes on the worker thread lock."""
+        with self._lock:
+            return self.engine.reconfigure(**kwargs)
+
     def _loop(self) -> None:
         while not self._stop.is_set():
             with self._lock:

@@ -21,6 +21,7 @@ from inference.openai_api import (
 from generate import get_device
 from observability import Observability
 from observability.dashboard.server import register_observability_routes
+from autotune.admin import register_tuning_routes
 
 DEFAULT_CHECKPOINT = (
     Path(__file__).resolve().parent.parent / "model" / "checkpoints" / "gpt_model_checkpoint.pt"
@@ -89,10 +90,15 @@ def create_app(
     backend_name: Optional[str] = None,
     observability: Optional[Observability] = None,
     enable_observability: bool = True,
+    auto_tune: bool = False,
+    tuning_goal: str = "balanced",
+    tuning_interval_sec: float = 30.0,
+    tuning_evaluation_sec: float = 60.0,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         worker: Optional[EngineWorker] = None
+        tuning_controller = None
         if engine is not None:
             app.state.engine = engine
             app.state.tokenizer = tokenizer
@@ -129,7 +135,29 @@ def create_app(
         worker = EngineWorker(app.state.engine)
         worker.start()
         app.state.worker = worker
+
+        if app.state.observability is not None:
+            from autotune import ControllerConfig, TuningController
+
+            tuning_controller = TuningController(
+                engine=app.state.engine,
+                observability=app.state.observability,
+                goal=tuning_goal,
+                worker=worker,
+                config=ControllerConfig(
+                    interval_sec=tuning_interval_sec,
+                    evaluation_sec=tuning_evaluation_sec,
+                ),
+            )
+            app.state.tuning_controller = tuning_controller
+            if auto_tune:
+                tuning_controller.start()
+        else:
+            app.state.tuning_controller = None
+
         yield
+        if tuning_controller is not None:
+            tuning_controller.stop()
         worker.stop()
 
     app = FastAPI(
@@ -147,6 +175,8 @@ def create_app(
         }
         if getattr(request.app.state, "observability", None):
             payload["observability"] = "/observability"
+        if getattr(request.app.state, "tuning_controller", None) is not None:
+            payload["auto_tune"] = "/v1/admin/tuning"
         return payload
 
     @app.post("/v1/completions")
@@ -179,6 +209,7 @@ def create_app(
 
     if enable_observability:
         register_observability_routes(app)
+        register_tuning_routes(app)
 
     return app
 
@@ -198,9 +229,40 @@ def main():
     )
     parser.add_argument("--checkpoint", type=Path, default=DEFAULT_CHECKPOINT)
     parser.add_argument("--max-concurrent", type=int, default=2)
+    parser.add_argument(
+        "--auto-tune",
+        action="store_true",
+        help="Enable embedded auto-tuning controller",
+    )
+    parser.add_argument(
+        "--tuning-goal",
+        default="balanced",
+        choices=["latency", "throughput", "balanced"],
+        help="Auto-tuning optimization goal",
+    )
+    parser.add_argument(
+        "--tuning-interval",
+        type=float,
+        default=30.0,
+        help="Seconds between auto-tune observation cycles",
+    )
+    parser.add_argument(
+        "--tuning-evaluation",
+        type=float,
+        default=60.0,
+        help="Seconds to evaluate a config change before promote/rollback",
+    )
     args = parser.parse_args()
 
-    server_app = create_app(args.model, args.checkpoint, args.max_concurrent)
+    server_app = create_app(
+        args.model,
+        args.checkpoint,
+        args.max_concurrent,
+        auto_tune=args.auto_tune,
+        tuning_goal=args.tuning_goal,
+        tuning_interval_sec=args.tuning_interval,
+        tuning_evaluation_sec=args.tuning_evaluation,
+    )
     print(f"Serving on http://{args.host}:{args.port}")
     print(f"Model backend: {args.model}")
     print("Docs:  http://{host}:{port}/docs".format(host=args.host, port=args.port))
@@ -208,6 +270,9 @@ def main():
     print('POST /v1/completions  {"prompt": "...", "max_new_tokens": 20, "stream": true}  # SSE')
     print("GET  /health")
     print("GET  /observability  (metrics dashboard)")
+    print("GET  /v1/admin/tuning  (auto-tune status)")
+    if args.auto_tune:
+        print(f"Auto-tune: enabled  goal={args.tuning_goal}")
     uvicorn.run(server_app, host=args.host, port=args.port)
 
 

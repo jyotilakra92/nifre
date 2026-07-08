@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Callable, Iterator, List, Optional
 import torch
 
 from inference.batching import make_kv_cache, make_paged_kv_cache
-from inference.data_model import InferenceRequest, RequestState
+from inference.data_model import EngineConfig, InferenceRequest, RequestState, validate_engine_config
 from inference.model_interface import InferenceModel
 from inference.model_runner import ModelRunner
 from inference.scheduler import Scheduler
@@ -133,6 +133,60 @@ class Engine:
         if request_id in self.scheduler.completed:
             return self.scheduler.completed[request_id]
         return self.scheduler.failed[request_id]
+
+    def get_config(self) -> EngineConfig:
+        return EngineConfig(
+            max_concurrent_requests=self.max_concurrent_requests,
+            prefill_chunk_size=self.prefill_chunk_size,
+            max_tokens_per_step=self.max_tokens_per_step,
+            use_paged_kv_cache=self.use_paged_kv_cache,
+            use_prefix_cache=self.use_prefix_cache,
+        )
+
+    def reconfigure(
+        self,
+        *,
+        prefill_chunk_size: int | None = None,
+        max_tokens_per_step: int | None = None,
+        max_concurrent_requests: int | None = None,
+        use_paged_kv_cache: bool | None = None,
+        use_prefix_cache: bool | None = None,
+    ) -> EngineConfig:
+        """Update tunable runtime settings without restarting the engine."""
+        validate_engine_config(
+            max_concurrent_requests=max_concurrent_requests,
+            prefill_chunk_size=prefill_chunk_size,
+            max_tokens_per_step=max_tokens_per_step,
+        )
+
+        cache_initialized = self.cache is not None
+
+        if use_paged_kv_cache is not None and use_paged_kv_cache != self.use_paged_kv_cache:
+            if cache_initialized:
+                raise ValueError("cannot change use_paged_kv_cache after KV cache is initialized")
+            self.use_paged_kv_cache = use_paged_kv_cache
+
+        if use_prefix_cache is not None and use_prefix_cache != self.use_prefix_cache:
+            if cache_initialized:
+                raise ValueError("cannot change use_prefix_cache after KV cache is initialized")
+            self.use_prefix_cache = use_prefix_cache
+
+        if prefill_chunk_size is not None:
+            self.prefill_chunk_size = prefill_chunk_size
+
+        if max_tokens_per_step is not None:
+            self.max_tokens_per_step = max_tokens_per_step
+
+        if max_tokens_per_step is not None or max_concurrent_requests is not None:
+            self.scheduler.reconfigure(
+                max_tokens_per_step=max_tokens_per_step,
+                max_concurrent_requests=max_concurrent_requests,
+                cache_initialized=cache_initialized,
+            )
+            if max_concurrent_requests is not None:
+                self.max_concurrent_requests = max_concurrent_requests
+
+        return self.get_config()
 
     def register_token_callback(self, request_id: str, callback: TokenCallback) -> None:
         """Register a per-request hook invoked after each generated token."""

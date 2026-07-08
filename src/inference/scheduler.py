@@ -7,6 +7,13 @@ class Scheduler:
     """Assigns KV-cache slots and picks prefill/decode batches each step."""
 
     def __init__(self, max_concurrent_requests: int, max_tokens_per_step: int = 2048):
+        if max_concurrent_requests <= 0:
+            raise ValueError(
+                f"max_concurrent_requests must be positive, got {max_concurrent_requests}"
+            )
+        if max_tokens_per_step <= 0:
+            raise ValueError(f"max_tokens_per_step must be positive, got {max_tokens_per_step}")
+
         self.max_concurrent_requests = max_concurrent_requests
         self.max_tokens_per_step = max_tokens_per_step
         self.waiting: deque = deque()
@@ -48,6 +55,59 @@ class Scheduler:
             prefill_requests=prefill_requests,
             decode_requests=decode_requests,
         )
+
+    def reconfigure(
+        self,
+        *,
+        max_tokens_per_step: int | None = None,
+        max_concurrent_requests: int | None = None,
+        cache_initialized: bool = False,
+    ) -> None:
+        if max_tokens_per_step is not None:
+            if max_tokens_per_step <= 0:
+                raise ValueError(
+                    f"max_tokens_per_step must be positive, got {max_tokens_per_step}"
+                )
+            self.max_tokens_per_step = max_tokens_per_step
+
+        if max_concurrent_requests is not None:
+            self._apply_max_concurrent(max_concurrent_requests, cache_initialized)
+
+    def _apply_max_concurrent(self, new_max: int, cache_initialized: bool) -> None:
+        if new_max <= 0:
+            raise ValueError(f"max_concurrent_requests must be positive, got {new_max}")
+
+        old_max = self.max_concurrent_requests
+        if new_max == old_max:
+            return
+
+        if cache_initialized and new_max > old_max:
+            raise ValueError(
+                "cannot increase max_concurrent_requests after KV cache is initialized"
+            )
+
+        if len(self.running) > new_max:
+            raise ValueError(
+                f"cannot set max_concurrent_requests to {new_max} with "
+                f"{len(self.running)} running requests"
+            )
+
+        for request in self.running.values():
+            if request.batch_idx is not None and request.batch_idx >= new_max:
+                raise ValueError(
+                    f"running request uses slot {request.batch_idx}, "
+                    f"above new max {new_max}"
+                )
+
+        if new_max > old_max:
+            for slot in range(old_max, new_max):
+                if slot not in self.free_slots:
+                    self.free_slots.append(slot)
+        else:
+            self.free_slots = [slot for slot in self.free_slots if slot < new_max]
+
+        self.free_slots.sort()
+        self.max_concurrent_requests = new_max
 
     def _prefill_chunk_tokens(self, request: InferenceRequest) -> int:
         remaining = request.num_prompt_tokens - request.prefill_offset

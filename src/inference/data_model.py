@@ -62,3 +62,30 @@ class ModelConfig:
     vocab_size: int
     pad_token_id: int
     block_size: int = 16
+
+
+@dataclass(frozen=True)
+class EngineConfig:
+    """Snapshot of tunable engine settings."""
+
+    max_concurrent_requests: int
+    prefill_chunk_size: int
+    max_tokens_per_step: int
+    use_paged_kv_cache: bool
+    use_prefix_cache: bool
+
+
+def validate_engine_config(
+    *,
+    max_concurrent_requests: int | None = None,
+    prefill_chunk_size: int | None = None,
+    max_tokens_per_step: int | None = None,
+) -> None:
+    if max_concurrent_requests is not None and max_concurrent_requests <= 0:
+        raise ValueError(
+            f"max_concurrent_requests must be positive, got {max_concurrent_requests}"
+        )
+    if prefill_chunk_size is not None and prefill_chunk_size <= 0:
+        raise ValueError(f"prefill_chunk_size must be positive, got {prefill_chunk_size}")
+    if max_tokens_per_step is not None and max_tokens_per_step <= 0:
+        raise ValueError(f"max_tokens_per_step must be positive, got {max_tokens_per_step}")

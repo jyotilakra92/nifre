@@ -40,6 +40,7 @@ def register_observability_routes(app: FastAPI) -> None:
     @app.get("/observability", response_class=HTMLResponse, include_in_schema=False)
     def observability_dashboard():
         html = _INDEX_HTML.replace('fetch("/api/metrics")', 'fetch("/observability/api/metrics")')
+        html = html.replace("<body>", '<body data-metrics-path="/observability/api/metrics" data-tuning-path="/observability/api/tuning">')
         return html
 
     @app.get("/observability/api/metrics", include_in_schema=False)
