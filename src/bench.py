@@ -30,6 +30,7 @@ class BenchConfig:
     duration_sec: float = 30.0
     concurrency: int = 2
     max_new_tokens: int = 16
+    model: Optional[str] = None
 
 
 @dataclass
@@ -107,11 +108,20 @@ def _percentile(values: List[float], p: float) -> float:
     return ordered[lower] + (ordered[upper] - ordered[lower]) * weight
 
 
-def default_request_fn(base_url: str) -> RequestFn:
+def default_request_fn(base_url: str, model: Optional[str] = None) -> RequestFn:
     endpoint = base_url.rstrip("/") + "/v1/completions"
 
     def send(prompt: str, max_new_tokens: int) -> tuple[float, bool, int]:
-        payload = json.dumps({"prompt": prompt, "max_new_tokens": max_new_tokens}).encode()
+        # nifre reads `max_new_tokens`; vLLM/OpenAI read `max_tokens` and require
+        # `model`. Sending all three keeps the same client fair to both servers.
+        body: dict = {
+            "prompt": prompt,
+            "max_new_tokens": max_new_tokens,
+            "max_tokens": max_new_tokens,
+        }
+        if model is not None:
+            body["model"] = model
+        payload = json.dumps(body).encode()
         request = urllib.request.Request(
             endpoint,
             data=payload,
@@ -157,7 +167,7 @@ def run_bench(
     if profile is None:
         raise ValueError(f"unknown profile {config.profile!r}; choose from {list(PROFILES)}")
 
-    send = request_fn or default_request_fn(config.base_url)
+    send = request_fn or default_request_fn(config.base_url, config.model)
     stop_at = time.time() + config.duration_sec
     lock = threading.Lock()
     prompt_index = 0
@@ -244,6 +254,7 @@ def main() -> None:
     parser.add_argument("--duration", type=float, default=30.0, help="Benchmark duration in seconds")
     parser.add_argument("--concurrency", type=int, default=2, help="Concurrent client threads")
     parser.add_argument("--max-new-tokens", type=int, default=16, help="Tokens to generate per request")
+    parser.add_argument("--model", default=None, help="Model id to send in the request (required by vLLM)")
     args = parser.parse_args()
 
     config = BenchConfig(
@@ -252,6 +263,7 @@ def main() -> None:
         duration_sec=args.duration,
         concurrency=max(1, args.concurrency),
         max_new_tokens=max(1, args.max_new_tokens),
+        model=args.model,
     )
     result = run_bench(config)
     print(format_report(result))

@@ -26,8 +26,8 @@ from bench import (
 )
 
 
-def _warmup(base_url: str, count: int, max_new_tokens: int) -> None:
-    send = default_request_fn(base_url)
+def _warmup(base_url: str, count: int, max_new_tokens: int, model: str | None) -> None:
+    send = default_request_fn(base_url, model)
     for _ in range(count):
         send("Warmup request, respond briefly.", max_new_tokens)
 
@@ -39,6 +39,7 @@ def _bench(base_url: str, config: BenchConfig) -> BenchResult:
         duration_sec=config.duration_sec,
         concurrency=config.concurrency,
         max_new_tokens=config.max_new_tokens,
+        model=config.model,
     ))
 
 
@@ -87,6 +88,7 @@ def main() -> None:
     parser.add_argument("--duration", type=float, default=60.0)
     parser.add_argument("--concurrency", type=int, default=8)
     parser.add_argument("--max-new-tokens", type=int, default=64)
+    parser.add_argument("--model", default=None, help="Model id sent in each request (required by vLLM)")
     parser.add_argument("--warmup", type=int, default=5, help="Warmup requests per server")
     args = parser.parse_args()
 
@@ -95,11 +97,12 @@ def main() -> None:
         duration_sec=args.duration,
         concurrency=max(1, args.concurrency),
         max_new_tokens=max(1, args.max_new_tokens),
+        model=args.model,
     )
 
     print(f"Warming up {args.a_label} and {args.b_label} ({args.warmup} requests each)...")
-    _warmup(args.a_url, args.warmup, config.max_new_tokens)
-    _warmup(args.b_url, args.warmup, config.max_new_tokens)
+    _warmup(args.a_url, args.warmup, config.max_new_tokens, config.model)
+    _warmup(args.b_url, args.warmup, config.max_new_tokens, config.model)
 
     print(f"Benchmarking {args.a_label} ({args.a_url})...")
     result_a = _bench(args.a_url, config)
