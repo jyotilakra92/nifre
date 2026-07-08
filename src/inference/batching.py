@@ -37,6 +37,8 @@ def make_paged_kv_cache(
     device,
     dtype=None,
     block_size: int | None = None,
+    enable_prefix_cache: bool = True,
+    prefix_cache_max_entries: int = 1024,
 ) -> PagedKVCache:
     if dtype is None:
         dtype = torch.float16
@@ -48,4 +50,6 @@ def make_paged_kv_cache(
         device=device,
         dtype=dtype,
         block_size=block_size or model_config.block_size,
+        enable_prefix_cache=enable_prefix_cache,
+        prefix_cache_max_entries=prefix_cache_max_entries,
     )

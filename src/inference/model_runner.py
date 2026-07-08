@@ -25,8 +25,16 @@ class ModelRunner:
         has been cached, otherwise ``None``.
         """
         for request in requests:
-            if request.prefill_offset == 0:
-                cache.reset_slot(request.batch_idx)
+            if not request.slot_prepared:
+                loaded = 0
+                if hasattr(cache, "try_load_prefix"):
+                    loaded = cache.try_load_prefix(request.batch_idx, request.prompt_token_ids)
+                if loaded > 0:
+                    request.prefill_offset = loaded
+                    request.prefix_cache_hit_tokens = loaded
+                elif request.prefill_offset == 0:
+                    cache.reset_slot(request.batch_idx)
+                request.slot_prepared = True
 
         token_lists = []
         for request in requests:

@@ -9,6 +9,8 @@ for path in (SRC, MODEL):
         sys.path.insert(0, str(path))
 
 from tests.test_prefix_cache import (
+    test_engine_prefix_cache_disabled,
+    test_engine_reuses_prefix_for_shared_prompt,
     test_prefix_cache_does_not_retain_existing_key,
     test_prefix_cache_eviction_drops_stale_entry,
     test_prefix_cache_ignores_partial_tail_block,
@@ -150,6 +152,8 @@ class SmokeTests(unittest.TestCase):
         test_prefix_cache_eviction_drops_stale_entry()
         test_prefix_cache_does_not_retain_existing_key()
         test_prefix_cache_init_validation()
+        test_engine_reuses_prefix_for_shared_prompt()
+        test_engine_prefix_cache_disabled()
 
     def test_attention(self):
         test_attention_cache_smoke()

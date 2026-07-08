@@ -31,6 +31,7 @@ class Engine:
         prefill_chunk_size: int = 128,
         max_tokens_per_step: int = 2048,
         use_paged_kv_cache: bool = True,
+        use_prefix_cache: bool = True,
     ):
         self.model = model
         self.device = device
@@ -42,6 +43,7 @@ class Engine:
         self.prefill_chunk_size = prefill_chunk_size
         self.max_tokens_per_step = max_tokens_per_step
         self.use_paged_kv_cache = use_paged_kv_cache
+        self.use_prefix_cache = use_prefix_cache
         self._token_callbacks: dict[str, TokenCallback] = {}
 
     def add_request(self, prompt_token_ids: List[int], max_new_tokens: int) -> str:
@@ -141,13 +143,20 @@ class Engine:
 
     def _cancel_request(self, request_id: str, status: str) -> Optional[InferenceRequest]:
         request = self.scheduler.cancel_request(request_id, status=status)
+        if request is not None and request.batch_idx is not None and self.cache is not None:
+            self.cache.reset_slot(request.batch_idx)
         return request
 
     def _ensure_cache(self) -> None:
         if self.cache is None:
             dtype = getattr(self.model, "dtype", torch.float16)
             if self.use_paged_kv_cache:
-                self.cache = make_paged_kv_cache(self.model.config, self.device, dtype=dtype)
+                self.cache = make_paged_kv_cache(
+                    self.model.config,
+                    self.device,
+                    dtype=dtype,
+                    enable_prefix_cache=self.use_prefix_cache,
+                )
             else:
                 self.cache = make_kv_cache(self.model.config, self.device, dtype=dtype)
             self.cache.init_batch(self.max_concurrent_requests)
@@ -171,17 +180,24 @@ class Engine:
         token_ids = self.model_runner.prefill(self.cache, requests)
         duration = time.perf_counter() - start
         if self.metrics:
+            for request in requests:
+                if request.prefix_cache_hit_tokens > 0:
+                    self.metrics.on_prefix_cache_hit(request.prefix_cache_hit_tokens)
             self.metrics.on_prefill_batch(requests, duration, tokens_processed)
 
         for request, token_id in zip(requests, token_ids):
+            if request.prefill_complete and hasattr(self.cache, "register_prefix"):
+                self.cache.register_prefix(request.batch_idx, request.prompt_token_ids)
             if token_id is None:
                 continue
+            batch_idx = request.batch_idx
             self.scheduler.mark_prefill_done(request)
             self.scheduler.mark_decode_done(request, token_id)
             self._emit_token(request.request_id, token_id)
             if self.metrics:
                 if request.state == RequestState.FINISHED:
                     self.metrics.on_request_finished(request)
+            self._release_cache_slot(batch_idx, request)
 
     def _run_decode(self, requests: List[InferenceRequest]) -> None:
         start = time.perf_counter()
@@ -191,9 +207,16 @@ class Engine:
             self.metrics.on_decode_batch(len(requests), duration)
 
         for request, token_id in zip(requests, token_ids):
+            batch_idx = request.batch_idx
             self.scheduler.mark_decode_done(request, token_id)
             self._emit_token(request.request_id, token_id)
             if self.metrics:
                 self.metrics.on_decode_token(request)
                 if request.state == RequestState.FINISHED:
                     self.metrics.on_request_finished(request)
+            self._release_cache_slot(batch_idx, request)
+
+    def _release_cache_slot(self, batch_idx: Optional[int], request: InferenceRequest) -> None:
+        if request.state != RequestState.FINISHED or self.cache is None or batch_idx is None:
+            return
+        self.cache.reset_slot(batch_idx)

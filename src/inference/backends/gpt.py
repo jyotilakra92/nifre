@@ -40,6 +40,7 @@ class GptInferenceModel:
             head_dim=cfg["emb_dim"] // cfg["num_heads"],
             vocab_size=cfg["vocab_size"],
             pad_token_id=pad_token_id,
+            block_size=cfg.get("block_size", 16),
         )
 
     @property

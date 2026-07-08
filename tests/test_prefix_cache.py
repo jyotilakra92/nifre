@@ -2,6 +2,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import torch
 
 SRC = Path(__file__).resolve().parent.parent / "src"
 MODEL = SRC / "model"
@@ -9,8 +10,11 @@ for path in (SRC, MODEL):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
+from inference.backends.gpt import GptInferenceModel
 from inference.block_allocator import BlockAllocator
+from inference.engine import Engine
 from inference.prefix_cache import PrefixCache
+from model.gpt_model import GPT_CONFIG_124M, GptModel
 
 
 def test_prefix_cache_lookup_and_insert():
@@ -103,3 +107,55 @@ def test_prefix_cache_init_validation():
         PrefixCache(allocator, block_size=0)
     with pytest.raises(ValueError, match="max_entries must be positive"):
         PrefixCache(allocator, block_size=4, max_entries=0)
+
+
+def test_engine_reuses_prefix_for_shared_prompt():
+    cfg = dict(GPT_CONFIG_124M)
+    cfg["num_layers"] = 2
+    cfg["emb_dim"] = 32
+    cfg["num_heads"] = 4
+    cfg["context_length"] = 64
+    cfg["block_size"] = 4
+
+    device = torch.device("cpu")
+    model = GptModel(cfg).to(device).eval()
+    wrapped = GptInferenceModel(model)
+    engine = Engine(
+        wrapped,
+        max_concurrent_requests=2,
+        device=device,
+        prefill_chunk_size=8,
+        use_prefix_cache=True,
+    )
+
+    shared_prompt = list(range(8))
+    engine.generate(shared_prompt + [101], max_new_tokens=1)
+    first_saved = engine.cache.prefix_cache.tokens_saved
+
+    engine.generate(shared_prompt + [202], max_new_tokens=1)
+    assert engine.cache.prefix_cache.hits >= 1
+    assert engine.cache.prefix_cache.tokens_saved > first_saved
+
+
+def test_engine_prefix_cache_disabled():
+    cfg = dict(GPT_CONFIG_124M)
+    cfg["num_layers"] = 2
+    cfg["emb_dim"] = 32
+    cfg["num_heads"] = 4
+    cfg["context_length"] = 64
+
+    device = torch.device("cpu")
+    model = GptModel(cfg).to(device).eval()
+    wrapped = GptInferenceModel(model)
+    engine = Engine(
+        wrapped,
+        max_concurrent_requests=1,
+        device=device,
+        use_prefix_cache=False,
+    )
+
+    prompt = list(range(8))
+    engine.generate(prompt, max_new_tokens=1)
+    engine.generate(prompt, max_new_tokens=1)
+
+    assert engine.cache.prefix_cache is None

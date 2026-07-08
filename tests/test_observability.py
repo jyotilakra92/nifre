@@ -65,6 +65,7 @@ def test_engine_metrics_smoke():
     promoted = [e["name"] for e in snapshot["optimization_history"]["recent_events"] if e["action"] == "promoted"]
     assert "paged-kv-cache" in promoted
     assert "chunked-prefill" in promoted
+    assert "prefix-cache" in promoted
 
 
 def test_optimization_tracker():

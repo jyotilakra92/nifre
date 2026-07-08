@@ -59,6 +59,11 @@ class MetricsCollector:
             "continuous-batching",
             details=f"max_concurrent={engine.max_concurrent_requests}",
         )
+        if engine.use_paged_kv_cache and engine.use_prefix_cache:
+            self.optimization.record_promotion(
+                "prefix-cache",
+                details=f"block_size={engine.model.config.block_size}",
+            )
 
     def on_request_enqueued(self) -> None:
         self.store.record_enqueue()
@@ -76,6 +81,9 @@ class MetricsCollector:
             if request.prefill_complete:
                 request.first_token_at = now
                 request.last_token_at = now
+
+    def on_prefix_cache_hit(self, tokens_saved: int) -> None:
+        self.store.record_prefix_cache_hit(tokens_saved)
 
     def on_decode_batch(self, batch_size: int, duration_sec: float) -> None:
         self.store.record_decode_step(duration_sec, batch_size)

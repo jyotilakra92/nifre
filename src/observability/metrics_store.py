@@ -62,6 +62,8 @@ class MetricsStore:
         self.total_output_tokens = 0
         self.total_decode_iterations = 0
         self.total_prefill_tokens = 0
+        self.prefix_cache_hits = 0
+        self.prefix_cache_tokens_saved = 0
 
         self._completion_timestamps: Deque[float] = deque(maxlen=5000)
         self._ttft_samples: Deque[float] = deque(maxlen=2000)
@@ -117,6 +119,11 @@ class MetricsStore:
             self.total_input_tokens += input_tokens
             self.total_output_tokens += output_tokens
             self._token_events.append((now, input_tokens, output_tokens))
+
+    def record_prefix_cache_hit(self, tokens_saved: int) -> None:
+        with self._lock:
+            self.prefix_cache_hits += 1
+            self.prefix_cache_tokens_saved += tokens_saved
 
     def record_prefill_step(
         self,
@@ -239,6 +246,8 @@ class MetricsStore:
                 "decode_iterations_per_sec": round(decode_iters_per_sec, 2),
                 "total_prefill_tokens": self.total_prefill_tokens,
                 "avg_prefill_tokens_per_step": round(avg_prefill_tokens_per_step, 2),
+                "prefix_cache_hits": self.prefix_cache_hits,
+                "prefix_cache_tokens_saved": self.prefix_cache_tokens_saved,
             },
             "gpu_runtime": runtime_info,
             "optimization_history": optimization_info,

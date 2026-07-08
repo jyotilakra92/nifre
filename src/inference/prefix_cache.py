@@ -26,9 +26,13 @@ class PrefixCache:
         self.block_size = block_size
         self.max_entries = max_entries
         self.entries: OrderedDict[CacheKey, int] = OrderedDict()
+        self.lookups = 0
+        self.hits = 0
+        self.tokens_saved = 0
 
     def lookup(self, token_ids: list[int]) -> tuple[int, list[int]]:
         """Return ``(matched_tokens, physical_blocks)`` for the longest cached prefix."""
+        self.lookups += 1
         parent_hash = self.ROOT_HASH
         matched_tokens = 0
         matched_blocks: list[int] = []
@@ -46,6 +50,10 @@ class PrefixCache:
             matched_tokens += self.block_size
             self.entries.move_to_end(key)
             parent_hash = self._chain(parent_hash, block_tokens)
+
+        if matched_tokens > 0:
+            self.hits += 1
+            self.tokens_saved += matched_tokens
 
         return matched_tokens, matched_blocks
 
@@ -79,3 +87,14 @@ class PrefixCache:
     @staticmethod
     def _chain(parent_hash: int, block_tokens: tuple[int, ...]) -> int:
         return hash((parent_hash, block_tokens))
+
+    def snapshot(self) -> dict[str, int | float]:
+        hit_rate = self.hits / self.lookups if self.lookups else 0.0
+        return {
+            "lookups": self.lookups,
+            "hits": self.hits,
+            "hit_rate": round(hit_rate, 4),
+            "tokens_saved": self.tokens_saved,
+            "entries": len(self.entries),
+            "max_entries": self.max_entries,
+        }

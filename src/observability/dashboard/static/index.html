@@ -230,9 +230,12 @@
           card("Decode iters / sec", t.decode_iterations_per_sec),
           card("Prefill tok / step", t.avg_prefill_tokens_per_step),
           card("Total prefill tok", t.total_prefill_tokens),
+          card("Prefix cache hits", t.prefix_cache_hits ?? 0),
+          card("Prefix tok saved", t.prefix_cache_tokens_saved ?? 0),
         ].join("");
 
         const ec = g.engine_config || {};
+        const pc = ec.prefix_cache || {};
         const blocksLabel = ec.cache_type === "paged"
           ? `${ec.allocated_blocks ?? 0} / ${ec.num_blocks ?? "—"} blocks`
           : "dense";
@@ -246,6 +249,8 @@
           card("Block size", ec.block_size ?? "—", true),
           card("Prefill chunk", ec.prefill_chunk_size ?? "—", true),
           card("Token budget", ec.max_tokens_per_step ?? "—", true),
+          card("Prefix hit rate", pc.hit_rate != null ? (pc.hit_rate * 100).toFixed(1) + "%" : "—", true),
+          card("Prefix entries", pc.entries ?? "—", true),
           card("Runtime", `<span class="badge">${g.runtime}</span>`, true),
           card("Model", g.model_name, true),
           card("Precision", g.precision, true),

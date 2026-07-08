@@ -28,6 +28,8 @@ class InferenceRequest:
     prefill_duration_sec: Optional[float] = None
     prefill_offset: int = 0
     prefill_chunk_size: int = 128
+    slot_prepared: bool = False
+    prefix_cache_hit_tokens: int = 0
     status: str = "ok"
 
     @property

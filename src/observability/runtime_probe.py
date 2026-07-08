@@ -117,6 +117,7 @@ class RuntimeProbe:
         use_paged = engine.use_paged_kv_cache
         config: Dict[str, object] = {
             "use_paged_kv_cache": use_paged,
+            "use_prefix_cache": getattr(engine, "use_prefix_cache", False),
             "prefill_chunk_size": engine.prefill_chunk_size,
             "max_tokens_per_step": engine.max_tokens_per_step,
             "max_concurrent_requests": engine.max_concurrent_requests,
@@ -124,11 +125,17 @@ class RuntimeProbe:
         }
 
         if cache is not None and _is_paged_cache(cache):
+            prefix_info = (
+                cache.prefix_cache.snapshot()
+                if getattr(cache, "prefix_cache", None) is not None
+                else None
+            )
             config.update(
                 {
                     "block_size": cache.block_size,
                     "num_blocks": cache.num_blocks,
                     "allocated_blocks": cache.allocated_blocks,
+                    "prefix_cache": prefix_info,
                 }
             )
         elif cache is not None:
