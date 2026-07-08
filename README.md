@@ -1,6 +1,6 @@
 # Inference Engine
 
-LLM inference engine with KV-cache, static batching, continuous batching, and a model-agnostic backend interface. Includes a FastAPI server, a reference GPT backend, and a generic Hugging Face backend that runs almost any causal LM (Qwen, Llama, Mistral, GPT-2, ...).
+A **self-improving** LLM inference engine with KV-cache, static batching, continuous batching, and a model-agnostic backend interface. A closed-loop auto-tuner continuously observes live metrics, proposes configuration changes, and promotes or rolls them back based on measured impact — so the engine tunes itself to the workload at runtime. Includes a FastAPI server, a reference GPT backend, and a generic Hugging Face backend that runs almost any causal LM (Qwen, Llama, Mistral, GPT-2, ...).
 
 ## Features
 
@@ -9,7 +9,8 @@ LLM inference engine with KV-cache, static batching, continuous batching, and a 
 - **Continuous batching** — requests join and leave between decode steps
 - **Chunked prefill** — long prompts are cached in fixed-size chunks so decode can interleave
 - **Paged KV cache** — block-pooled K/V storage with per-sequence block tables (engine default)
-- **Prefix caching** — reuse cached K/V across requests that share prompt prefixes (block-level for the custom backend, token-level for HF models; toggle with `--no-prefix-cache`)
+- **Prefix caching** — reuse cached K/V across requests that share prompt prefixes, via block-chained hashing for both the custom and HF backends (toggle with `--no-prefix-cache`)
+- **Self-improving auto-tuner** — closed loop that observes metrics, classifies the workload, proposes config changes (chunk size, token budget, concurrency), and promotes or rolls back based on measured impact
 - **Model-agnostic API** — plug in backends via `InferenceModel` + `Tokenizer`
 - **Hugging Face backend** — run any `AutoModelForCausalLM` (Qwen, Llama, Mistral, ...) with `--model hf --hf-model <id>`
 - **FastAPI server** — HTTP completions with blocking JSON or SSE streaming (`stream: true`)
