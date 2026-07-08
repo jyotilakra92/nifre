@@ -105,3 +105,74 @@ def test_paged_kv_cache_reset_slot_frees_blocks():
     cache.append(0, layer_id=0, key=key, value=value)
     cache.append(0, layer_id=1, key=key, value=value)
     assert cache.block_tables[0].physical_blocks()[0] == freed
+
+
+def test_paged_kv_cache_register_and_reload_prefix():
+    cache = PagedKVCache(
+        num_layers=2,
+        max_seq_len=32,
+        n_heads=2,
+        head_dim=4,
+        device="cpu",
+        dtype=torch.float32,
+        block_size=4,
+        enable_prefix_cache=True,
+    )
+    cache.init_batch(batch_size=1)
+
+    key = torch.randn(4, 2, 4)
+    value = torch.randn(4, 2, 4)
+    cache.append(0, layer_id=0, key=key, value=value)
+    cache.append(0, layer_id=1, key=key, value=value)
+
+    prompt = [1, 2, 3, 4]
+    cache.register_prefix(0, prompt)
+    physical = cache.block_tables[0].physical_blocks()[0]
+
+    cache.reset_slot(0)
+    assert cache.length(0) == 0
+    assert cache.allocated_blocks == 1
+
+    loaded = cache.try_load_prefix(0, prompt + [99])
+    assert loaded == 4
+    assert cache.length(0) == 4
+    assert cache.block_tables[0].physical_blocks()[0] == physical
+
+    past_k, _ = cache.get(0, layer_id=0)
+    assert past_k.shape == (4, 2, 4)
+    assert torch.allclose(past_k, key)
+
+
+def test_paged_kv_cache_try_load_prefix_miss_returns_zero():
+    cache = PagedKVCache(
+        num_layers=2,
+        max_seq_len=16,
+        n_heads=2,
+        head_dim=4,
+        device="cpu",
+        dtype=torch.float32,
+        block_size=4,
+    )
+    cache.init_batch(batch_size=1)
+
+    assert cache.try_load_prefix(0, [1, 2, 3, 4]) == 0
+    assert cache.length(0) == 0
+    assert cache.block_tables[0].physical_blocks() == []
+
+
+def test_paged_kv_cache_prefix_cache_can_be_disabled():
+    cache = PagedKVCache(
+        num_layers=2,
+        max_seq_len=16,
+        n_heads=2,
+        head_dim=4,
+        device="cpu",
+        dtype=torch.float32,
+        block_size=4,
+        enable_prefix_cache=False,
+    )
+    cache.init_batch(batch_size=1)
+
+    assert cache.prefix_cache is None
+    cache.register_prefix(0, [1, 2, 3, 4])
+    assert cache.try_load_prefix(0, [1, 2, 3, 4]) == 0

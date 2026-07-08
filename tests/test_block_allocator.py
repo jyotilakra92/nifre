@@ -95,3 +95,25 @@ def test_allocate_many_rejects_invalid_count():
     allocator = BlockAllocator(2)
     with pytest.raises(ValueError, match="count must be positive"):
         allocator.allocate_many(0)
+
+
+def test_retain_keeps_block_alive_after_one_release():
+    allocator = BlockAllocator(2)
+    block_id = allocator.allocate()
+
+    allocator.retain(block_id)
+    assert allocator.refcount(block_id) == 2
+
+    allocator.release(block_id)
+    assert allocator.allocated_count == 1
+    assert allocator.free_count == 1
+
+    allocator.release(block_id)
+    assert allocator.allocated_count == 0
+    assert allocator.free_count == 2
+
+
+def test_retain_requires_allocated_block():
+    allocator = BlockAllocator(2)
+    with pytest.raises(ValueError, match="not allocated"):
+        allocator.retain(0)

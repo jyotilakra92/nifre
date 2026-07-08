@@ -2,6 +2,7 @@ import torch
 
 from inference.block_allocator import BlockAllocator
 from inference.block_table import BlockTable
+from inference.prefix_cache import PrefixCache
 
 
 class PagedKVCache:
@@ -22,6 +23,8 @@ class PagedKVCache:
         device: str = "cpu",
         dtype: torch.dtype = torch.float16,
         block_size: int = 16,
+        enable_prefix_cache: bool = True,
+        prefix_cache_max_entries: int = 1024,
     ) -> None:
         if block_size <= 0:
             raise ValueError(f"block_size must be positive, got {block_size}")
@@ -33,6 +36,8 @@ class PagedKVCache:
         self.device = device
         self.dtype = dtype
         self.block_size = block_size
+        self.enable_prefix_cache = enable_prefix_cache
+        self.prefix_cache_max_entries = prefix_cache_max_entries
 
         self.batch_size = 0
         self.num_blocks = 0
@@ -41,6 +46,7 @@ class PagedKVCache:
         self.v = None
         self.block_allocator: BlockAllocator | None = None
         self.block_tables: list[BlockTable] = []
+        self.prefix_cache: PrefixCache | None = None
 
     def init_batch(self, batch_size: int) -> None:
         """Initialize the cache for a new batch of sequences."""
@@ -53,6 +59,15 @@ class PagedKVCache:
         self.block_tables = [
             BlockTable(self.block_allocator, self.block_size) for _ in range(batch_size)
         ]
+        self.prefix_cache = (
+            PrefixCache(
+                self.block_allocator,
+                self.block_size,
+                max_entries=self.prefix_cache_max_entries,
+            )
+            if self.enable_prefix_cache
+            else None
+        )
 
         block_shape = (
             self.num_blocks,
@@ -68,6 +83,26 @@ class PagedKVCache:
             torch.empty(block_shape, device=self.device, dtype=self.dtype)
             for _ in range(self.num_layers)
         ]
+
+    def try_load_prefix(self, batch_idx: int, token_ids: list[int]) -> int:
+        """Load a cached prefix into a slot. Returns the number of tokens restored."""
+        if self.prefix_cache is None:
+            return 0
+
+        num_tokens, physical_blocks = self.prefix_cache.lookup(token_ids)
+        if num_tokens == 0:
+            return 0
+
+        self.block_tables[batch_idx].import_blocks(physical_blocks)
+        self.pos[batch_idx] = num_tokens
+        return num_tokens
+
+    def register_prefix(self, batch_idx: int, token_ids: list[int]) -> None:
+        """Store a completed prompt prefix in the shared cache."""
+        if self.prefix_cache is None:
+            return
+        physical_blocks = self.block_tables[batch_idx].physical_blocks()
+        self.prefix_cache.insert(token_ids, physical_blocks)
 
     def append(self, batch_idx: int, layer_id: int, key: torch.Tensor, value: torch.Tensor) -> None:
         pos = self.pos[batch_idx].item()
@@ -131,3 +166,4 @@ class PagedKVCache:
         self.v = None
         self.block_allocator = None
         self.block_tables = []
+        self.prefix_cache = None

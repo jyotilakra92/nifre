@@ -21,6 +21,7 @@ class BlockAllocator:
         self._num_blocks = num_blocks
         self._free = list(range(num_blocks))
         self._in_use: set[int] = set()
+        self._refcount = [0] * num_blocks
 
     @property
     def num_blocks(self) -> int:
@@ -57,15 +58,40 @@ class BlockAllocator:
         for _ in range(count):
             block_id = self._free.pop()
             self._in_use.add(block_id)
+            self._refcount[block_id] = 1
             allocated.append(block_id)
         return allocated
 
+    def retain(self, block_id: int) -> None:
+        """Increment a block's reference count (for shared prefix blocks)."""
+        self._validate_block_id(block_id)
+        if block_id not in self._in_use:
+            raise ValueError(f"block {block_id} is not allocated")
+        self._refcount[block_id] += 1
+
+    def release(self, block_id: int) -> None:
+        """Decrement a block's reference count; return it to the pool at zero."""
+        self._validate_block_id(block_id)
+        if block_id not in self._in_use:
+            raise ValueError(f"block {block_id} is not allocated")
+        self._refcount[block_id] -= 1
+        if self._refcount[block_id] < 0:
+            raise ValueError(f"block {block_id} refcount underflow")
+        if self._refcount[block_id] == 0:
+            self._in_use.remove(block_id)
+            self._free.append(block_id)
+
+    def refcount(self, block_id: int) -> int:
+        """Return the current reference count for a block (0 if not in use)."""
+        self._validate_block_id(block_id)
+        return self._refcount[block_id]
+
     def free(self, block_id: int) -> None:
-        """Return one block to the free pool."""
+        """Release one reference to a block."""
         self.free_many([block_id])
 
     def free_many(self, block_ids: list[int]) -> None:
-        """Return multiple blocks to the free pool."""
+        """Release references to multiple blocks."""
         if not block_ids:
             return
 
@@ -75,12 +101,9 @@ class BlockAllocator:
             if block_id in seen:
                 raise ValueError(f"duplicate block_id in free_many: {block_id}")
             seen.add(block_id)
-            if block_id not in self._in_use:
-                raise ValueError(f"block {block_id} is not allocated")
 
         for block_id in block_ids:
-            self._in_use.remove(block_id)
-            self._free.append(block_id)
+            self.release(block_id)
 
     def _validate_block_id(self, block_id: int) -> None:
         if block_id < 0 or block_id >= self._num_blocks:

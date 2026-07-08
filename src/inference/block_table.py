@@ -17,6 +17,14 @@ class BlockTable:
         self._block_size = block_size
         self._physical_blocks: list[int] = []
 
+    def import_blocks(self, physical_blocks: list[int]) -> None:
+        """Attach shared physical blocks (e.g. from prefix cache) to this sequence."""
+        if self._physical_blocks:
+            raise ValueError("cannot import blocks into a non-empty block table")
+        for block_id in physical_blocks:
+            self._allocator.retain(block_id)
+        self._physical_blocks = list(physical_blocks)
+
     def ensure_capacity(self, total_tokens: int) -> None:
         """Ensure blocks exist for ``total_tokens`` cached tokens (after upcoming write)."""
         if total_tokens < 0:

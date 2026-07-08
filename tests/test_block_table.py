@@ -89,6 +89,26 @@ def test_resolve_unallocated_token_raises():
         table.resolve(16)
 
 
+def test_import_blocks_attaches_shared_blocks():
+    allocator = BlockAllocator(4)
+    table = BlockTable(allocator, block_size=4)
+
+    block_id = allocator.allocate()
+    table.import_blocks([block_id])
+
+    assert table.physical_blocks() == [block_id]
+    assert allocator.refcount(block_id) == 2
+
+
+def test_import_blocks_rejects_non_empty_table():
+    allocator = BlockAllocator(4)
+    table = BlockTable(allocator, block_size=4)
+    table.ensure_capacity(4)
+
+    with pytest.raises(ValueError, match="non-empty"):
+        table.import_blocks([0])
+
+
 def test_clear_frees_blocks_to_allocator():
     allocator = BlockAllocator(4)
     table = BlockTable(allocator, block_size=16)

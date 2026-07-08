@@ -8,14 +8,28 @@ for path in (SRC, MODEL):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
+from tests.test_prefix_cache import (
+    test_prefix_cache_does_not_retain_existing_key,
+    test_prefix_cache_eviction_drops_stale_entry,
+    test_prefix_cache_ignores_partial_tail_block,
+    test_prefix_cache_init_validation,
+    test_prefix_cache_insert_retains_blocks,
+    test_prefix_cache_lookup_and_insert,
+    test_prefix_cache_partial_match_stops_at_first_miss,
+)
 from tests.test_paged_kv_cache import (
     test_paged_kv_cache_block_growth,
+    test_paged_kv_cache_prefix_cache_can_be_disabled,
+    test_paged_kv_cache_register_and_reload_prefix,
     test_paged_kv_cache_reset_slot_frees_blocks,
     test_paged_kv_cache_smoke,
+    test_paged_kv_cache_try_load_prefix_miss_returns_zero,
 )
 from tests.test_block_table import (
     test_clear_allows_block_reuse,
     test_clear_frees_blocks_to_allocator,
+    test_import_blocks_attaches_shared_blocks,
+    test_import_blocks_rejects_non_empty_table,
     test_ensure_capacity_grows_with_sequence,
     test_ensure_capacity_idempotent,
     test_ensure_capacity_rejects_negative_total,
@@ -33,6 +47,8 @@ from tests.test_block_allocator import (
     test_block_reuse_after_free,
     test_double_free_rejected,
     test_free_many_duplicate_rejected,
+    test_retain_keeps_block_alive_after_one_release,
+    test_retain_requires_allocated_block,
     test_free_many_empty_list,
     test_free_out_of_range_rejected,
     test_init_rejects_invalid_size,
@@ -99,6 +115,8 @@ class SmokeTests(unittest.TestCase):
         test_utilization()
         test_free_many_empty_list()
         test_allocate_many_rejects_invalid_count()
+        test_retain_keeps_block_alive_after_one_release()
+        test_retain_requires_allocated_block()
 
     def test_block_table(self):
         test_init_rejects_invalid_block_size()
@@ -111,6 +129,8 @@ class SmokeTests(unittest.TestCase):
         test_resolve_offset_within_block()
         test_resolve_unallocated_token_raises()
         test_clear_frees_blocks_to_allocator()
+        test_import_blocks_attaches_shared_blocks()
+        test_import_blocks_rejects_non_empty_table()
         test_clear_allows_block_reuse()
         test_pool_exhausted_propagates()
 
@@ -118,6 +138,18 @@ class SmokeTests(unittest.TestCase):
         test_paged_kv_cache_smoke()
         test_paged_kv_cache_block_growth()
         test_paged_kv_cache_reset_slot_frees_blocks()
+        test_paged_kv_cache_register_and_reload_prefix()
+        test_paged_kv_cache_try_load_prefix_miss_returns_zero()
+        test_paged_kv_cache_prefix_cache_can_be_disabled()
+
+    def test_prefix_cache(self):
+        test_prefix_cache_lookup_and_insert()
+        test_prefix_cache_partial_match_stops_at_first_miss()
+        test_prefix_cache_ignores_partial_tail_block()
+        test_prefix_cache_insert_retains_blocks()
+        test_prefix_cache_eviction_drops_stale_entry()
+        test_prefix_cache_does_not_retain_existing_key()
+        test_prefix_cache_init_validation()
 
     def test_attention(self):
         test_attention_cache_smoke()
